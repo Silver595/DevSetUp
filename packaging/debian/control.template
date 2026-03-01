@@ -1,0 +1,21 @@
+Package: devsetup
+Version: @@VERSION@@
+Architecture: @@ARCH@@
+Maintainer: @@MAINTAINER@@
+Depends: bash (>= 4.0), curl, git
+Recommends: whiptail | dialog, fzf
+Section: utils
+Priority: optional
+Homepage: https://github.com/YOU/devsetup
+Description: @@DESCRIPTION@@
+ devsetup is an interactive DevOps bootstrapper that installs and
+ configures common development tools (Docker, kubectl, Helm, Terraform,
+ AWS CLI, Node.js, Python, Git) on Debian/Ubuntu, Fedora, and Arch Linux.
+ .
+ Features:
+  - Interactive TUI tool selector
+  - Idempotent installs (skips already-installed tools)
+  - Git configuration wizard
+  - Shell alias injection
+  - Project folder scaffolding
+  - Dry-run mode

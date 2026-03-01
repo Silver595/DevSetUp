@@ -1,0 +1,12 @@
+#!/bin/bash
+# postinst — runs after dpkg installs the package
+set -e
+
+case "$1" in
+    configure)
+        # Ensure lib scripts are executable
+        chmod +x /usr/share/devsetup/lib/*.sh 2>/dev/null || true
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,17 @@
+#!/bin/bash
+# prerm — runs before dpkg removes the package
+set -e
+
+case "$1" in
+    remove|purge)
+        # Remove injected aliases from any shell RCs if user runs purge
+        for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish"; do
+            if [[ -f "$rc" ]] && grep -q '# >>> devsetup aliases >>>' "$rc" 2>/dev/null; then
+                sed -i '/# >>> devsetup aliases >>>/,/# <<< devsetup aliases <<</d' "$rc"
+                echo "  Removed devsetup aliases from $rc"
+            fi
+        done
+        ;;
+esac
+
+exit 0
