@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  devsetup — DevOps Bootstrapper
+#  One-shot interactive script to set up a development environment.
+#
+#  Usage:
+#    ./devsetup              # Interactive TUI mode
+#    ./devsetup --list       # List all installable tools
+#    ./devsetup --dry-run    # Show what would be done, install nothing
+#    ./devsetup --scaffold [name]   # Scaffold a project folder structure
+#    ./devsetup --git-config        # Run the Git configuration wizard
+#    ./devsetup --aliases           # Inject shell aliases only
+#    ./devsetup --install TOOL ...  # Install specific tools non-interactively
+#    ./devsetup --help              # Show this help
+# =============================================================================
+set -euo pipefail
+
+# ── Resolve script directory (works even when symlinked) ─────────────────────
+DEVSETUP_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+LIB_DIR="$DEVSETUP_DIR/lib"
+CONF_DIR="$DEVSETUP_DIR/config"
+
+# ── Source library modules ────────────────────────────────────────────────────
+# shellcheck source=lib/logger.sh
+source "$LIB_DIR/logger.sh"
+# shellcheck source=lib/detect.sh
+source "$LIB_DIR/detect.sh"
+# shellcheck source=lib/install.sh
+source "$LIB_DIR/install.sh"
+# shellcheck source=lib/aliases.sh
+source "$LIB_DIR/aliases.sh"
+# shellcheck source=lib/scaffold.sh
+source "$LIB_DIR/scaffold.sh"
+# shellcheck source=lib/tui.sh
+source "$LIB_DIR/tui.sh"
+
+# ── Global flags (overridable via CLI) ────────────────────────────────────────
+DRY_RUN="${DRY_RUN:-false}"
+export DRY_RUN
+
+# ── Version ───────────────────────────────────────────────────────────────────
+DEVSETUP_VERSION="1.0.0"
+
+# =============================================================================
+# ── Banner ────────────────────────────────────────────────────────────────────
+# =============================================================================
+_print_banner() {
+    echo -e "${BMAGENTA}"
+    cat << 'BANNER'
+  ██████╗ ███████╗██╗   ██╗███████╗███████╗████████╗██╗   ██╗██████╗
+  ██╔══██╗██╔════╝██║   ██║██╔════╝██╔════╝╚══██╔══╝██║   ██║██╔══██╗
+  ██║  ██║█████╗  ██║   ██║███████╗█████╗     ██║   ██║   ██║██████╔╝
+  ██║  ██║██╔══╝  ╚██╗ ██╔╝╚════██║██╔══╝     ██║   ██║   ██║██╔═══╝
+  ██████╔╝███████╗ ╚████╔╝ ███████║███████╗   ██║   ╚██████╔╝██║
+  ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝
+BANNER
+    echo -e "${RESET}"
+    echo -e "  ${DIM}DevOps Bootstrapper v${DEVSETUP_VERSION}  —  github.com/devsetup${RESET}"
+    echo ""
+}
+
+# =============================================================================
+# ── Help ─────────────────────────────────────────────────────────────────────
+# =============================================================================
+_print_help() {
+    _print_banner
+    cat << EOF
+${BOLD}USAGE${RESET}
+  devsetup [OPTIONS]
+
+${BOLD}OPTIONS${RESET}
+  (none)                    Launch interactive TUI tool selector
+  --install TOOL [TOOL...]  Install specific tools non-interactively
+  --list                    List all installable tools
+  --git-config              Run the Git configuration wizard
+  --aliases                 Inject shell aliases into ~/.bashrc or ~/.zshrc
+  --scaffold [NAME]         Create a DevOps project folder structure
+  --dry-run                 Show actions without executing them
+  --help, -h                Show this help message
+  --version                 Print version
+
+${BOLD}EXAMPLES${RESET}
+  devsetup                         # Interactive menu
+  devsetup --install docker kubectl helm
+  devsetup --dry-run --install terraform
+  devsetup --scaffold my-service
+  devsetup --git-config
+  devsetup --aliases
+
+${BOLD}ENVIRONMENT${RESET}
+  DRY_RUN=true devsetup            # Alternative to --dry-run flag
+  LOG_FILE=/tmp/devsetup.log devsetup   # Enable file logging
+
+EOF
+}
+
+# =============================================================================
+# ── Load tools.conf into associative array ───────────────────────────────────
+# =============================================================================
+declare -A TOOL_GROUPS=()
+_load_tools_conf() {
+    local conf="$CONF_DIR/tools.conf"
+    [[ ! -f "$conf" ]] && { log_warn "tools.conf not found at $conf"; return; }
+
+    while IFS=: read -r category tool || [[ -n "$tool" ]]; do
+        [[ -z "$category" || "$category" =~ ^# || -z "$tool" ]] && continue
+        TOOL_GROUPS["$category"]+="$tool "
+    done < <(grep -v '^\s*#' "$conf" | grep -v '^\s*$')
+}
+
+# =============================================================================
+# ── Git configuration wizard ─────────────────────────────────────────────────
+# =============================================================================
+run_git_config_wizard() {
+    log_section "Git Configuration Wizard"
+
+    local current_name;  current_name="$(git config --global user.name  2>/dev/null || echo '')"
+    local current_email; current_email="$(git config --global user.email 2>/dev/null || echo '')"
+
+    echo ""
+    read -rp "  Full name  [${current_name:-none}]: "  git_name
+    read -rp "  Email      [${current_email:-none}]: "  git_email
+
+    local default_branch; default_branch="$(git config --global init.defaultBranch 2>/dev/null || echo 'main')"
+    read -rp "  Default branch [${default_branch}]: "   git_branch
+
+    local editor; editor="$(git config --global core.editor 2>/dev/null || echo 'vim')"
+    read -rp "  Preferred editor [${editor}]: "         git_editor
+
+    git_name="${git_name:-$current_name}"
+    git_email="${git_email:-$current_email}"
+    git_branch="${git_branch:-$default_branch}"
+    git_editor="${git_editor:-$editor}"
+
+    echo ""
+    echo "  Preview:"
+    echo "    user.name    = $git_name"
+    echo "    user.email   = $git_email"
+    echo "    init.branch  = $git_branch"
+    echo "    core.editor  = $git_editor"
+    echo ""
+
+    if ! tui_confirm "Apply these Git settings?"; then
+        log_skip "Git configuration cancelled."
+        return 0
+    fi
+
+    run_cmd git config --global user.name        "$git_name"
+    run_cmd git config --global user.email       "$git_email"
+    run_cmd git config --global init.defaultBranch "$git_branch"
+    run_cmd git config --global core.editor      "$git_editor"
+
+    # Sensible extras
+    run_cmd git config --global core.autocrlf    input
+    run_cmd git config --global pull.rebase      true
+    run_cmd git config --global push.autoSetupRemote true
+    run_cmd git config --global rerere.enabled   true
+    run_cmd git config --global color.ui         auto
+    run_cmd git config --global alias.lg         "log --oneline --graph --decorate -20"
+    run_cmd git config --global alias.st         "status -sb"
+    run_cmd git config --global alias.undo       "reset HEAD~1 --mixed"
+
+    log_ok "Git configured successfully."
+}
+
+# =============================================================================
+# ── Install tools from a space-separated list ─────────────────────────────────
+# =============================================================================
+install_tool_list() {
+    local tools=("$@")
+    local failed=()
+
+    for tool in "${tools[@]}"; do
+        echo ""
+        if ! install_tool "$tool"; then
+            failed+=("$tool")
+        fi
+    done
+
+    echo ""
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        log_warn "The following tools failed/were skipped: ${failed[*]}"
+    else
+        log_ok "All selected tools installed successfully."
+    fi
+}
+
+# =============================================================================
+# ── Interactive TUI mode ──────────────────────────────────────────────────────
+# =============================================================================
+run_interactive() {
+    _load_tools_conf
+    detect_os
+
+    _print_banner
+    log_section "System Information"
+    detect_print_summary
+    echo ""
+
+    # Tool selection
+    local selected_raw
+    if ! selected_raw="$(tui_select_tools TOOL_GROUPS)"; then
+        log_info "No tools selected. Exiting."
+        exit 0
+    fi
+
+    local selected_tools=()
+    read -ra selected_tools <<< "$selected_raw"
+
+    if [[ ${#selected_tools[@]} -eq 0 ]]; then
+        log_info "No tools selected. Exiting."
+        exit 0
+    fi
+
+    echo ""
+    log_section "Installing Selected Tools"
+    log_info "Selected: ${selected_tools[*]}"
+    echo ""
+
+    # Optional: git config wizard
+    if printf '%s\n' "${selected_tools[@]}" | grep -qi '^git$'; then
+        if tui_confirm "Run the Git configuration wizard?"; then
+            run_git_config_wizard
+        fi
+    fi
+
+    _pkg_update
+    install_tool_list "${selected_tools[@]}"
+
+    # Aliases
+    echo ""
+    if tui_confirm "Inject devsetup shell aliases into your RC file?"; then
+        inject_aliases "$CONF_DIR/aliases.conf"
+    fi
+
+    # Scaffold
+    echo ""
+    if tui_confirm "Scaffold a new DevOps project folder structure?"; then
+        scaffold_interactive "$CONF_DIR/folders.conf"
+    fi
+
+    echo ""
+    log_section "Done! 🚀"
+    log_ok "Your environment is set up. Open a new terminal or run: source ~/.bashrc"
+}
+
+# =============================================================================
+# ── Entrypoint / argument parsing ────────────────────────────────────────────
+# =============================================================================
+main() {
+    # Pre-flight: detect OS
+    detect_os
+
+    if [[ $# -eq 0 ]]; then
+        run_interactive
+        exit 0
+    fi
+
+    case "$1" in
+        --help|-h)
+            _print_help
+            ;;
+        --version)
+            echo "devsetup $DEVSETUP_VERSION"
+            ;;
+        --list)
+            _print_banner
+            echo "  Available tools:"
+            echo ""
+            _load_tools_conf
+            for cat in "${!TOOL_GROUPS[@]}"; do
+                echo "  ${BOLD}${BCYAN}[$cat]${RESET}"
+                for tool in ${TOOL_GROUPS[$cat]}; do
+                    if command -v "$tool" &>/dev/null; then
+                        echo -e "    ${GREEN}${ICON_OK}${RESET}  $tool"
+                    else
+                        echo -e "    ${DIM}○${RESET}  $tool"
+                    fi
+                done
+            done
+            echo ""
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            export DRY_RUN
+            log_warn "DRY RUN mode enabled — no changes will be made."
+            shift
+            # Continue with remaining args (allow chaining: --dry-run --install ...)
+            if [[ $# -gt 0 ]]; then
+                main "$@"
+            else
+                run_interactive
+            fi
+            ;;
+        --install)
+            shift
+            if [[ $# -eq 0 ]]; then
+                log_error "--install requires at least one tool name."
+                exit 1
+            fi
+            log_section "Installing: $*"
+            _pkg_update
+            install_tool_list "$@"
+            ;;
+        --git-config)
+            run_git_config_wizard
+            ;;
+        --aliases)
+            inject_aliases "$CONF_DIR/aliases.conf"
+            ;;
+        --scaffold)
+            shift
+            local proj_name="${1:-}"
+            if [[ -n "$proj_name" ]]; then
+                local proj_root="$HOME/projects/$proj_name"
+                scaffold_project "$CONF_DIR/folders.conf" "$proj_root"
+            else
+                scaffold_interactive "$CONF_DIR/folders.conf"
+            fi
+            ;;
+        --remove-aliases)
+            remove_aliases
+            ;;
+        --preview-aliases)
+            preview_aliases "$CONF_DIR/aliases.conf"
+            ;;
+        --preview-scaffold)
+            preview_scaffold "$CONF_DIR/folders.conf"
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            echo "Run '$(basename "$0") --help' for usage."
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
