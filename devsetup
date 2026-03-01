@@ -13,7 +13,10 @@
 #    ./devsetup --install TOOL ...  # Install specific tools non-interactively
 #    ./devsetup --help              # Show this help
 # =============================================================================
-set -euo pipefail
+# Do NOT use set -euo pipefail here — install commands can legitimately fail
+# (e.g. package not found, sudo prompt) and we want to handle each gracefully
+# instead of silently killing the whole script.
+set -uo pipefail
 
 # ── Resolve script directory (works even when symlinked) ─────────────────────
 DEVSETUP_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -40,6 +43,17 @@ export DRY_RUN
 
 # ── Version ───────────────────────────────────────────────────────────────────
 DEVSETUP_VERSION="1.0.0"
+
+# ── Global EXIT trap — always kill spinner so it never orphans ────────────────
+trap '_cleanup_on_exit' EXIT
+_cleanup_on_exit() {
+    # Kill spinner if running so terminal is left clean on any exit
+    if [[ -n "${_SPINNER_PID:-}" ]]; then
+        kill "$_SPINNER_PID" 2>/dev/null || true
+        wait "$_SPINNER_PID" 2>/dev/null || true
+        echo -ne "\r\033[2K" >&2
+    fi
+}
 
 # =============================================================================
 # ── Banner ────────────────────────────────────────────────────────────────────

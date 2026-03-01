@@ -73,6 +73,8 @@ _SPINNER_PID=""
 _spinner_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 
 spinner_start() {
+    # No-op in dry-run — output is instant, spinner just clutters
+    [[ "${DRY_RUN:-false}" == "true" ]] && return 0
     local msg="${1:-Working...}"
     (
         local i=0
@@ -88,6 +90,7 @@ spinner_start() {
 }
 
 spinner_stop() {
+    [[ "${DRY_RUN:-false}" == "true" ]] && return 0
     local status="${1:-ok}"   # ok | fail | skip
     if [[ -n "$_SPINNER_PID" ]]; then
         kill "$_SPINNER_PID" 2>/dev/null
