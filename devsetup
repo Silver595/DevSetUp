@@ -59,18 +59,17 @@ _cleanup_on_exit() {
 # ── Banner ────────────────────────────────────────────────────────────────────
 # =============================================================================
 _print_banner() {
-    echo -e "${BMAGENTA}"
-    cat << 'BANNER'
-  ██████╗ ███████╗██╗   ██╗███████╗███████╗████████╗██╗   ██╗██████╗
-  ██╔══██╗██╔════╝██║   ██║██╔════╝██╔════╝╚══██╔══╝██║   ██║██╔══██╗
-  ██║  ██║█████╗  ██║   ██║███████╗█████╗     ██║   ██║   ██║██████╔╝
-  ██║  ██║██╔══╝  ╚██╗ ██╔╝╚════██║██╔══╝     ██║   ██║   ██║██╔═══╝
-  ██████╔╝███████╗ ╚████╔╝ ███████║███████╗   ██║   ╚██████╔╝██║
-  ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝
-BANNER
-    echo -e "${RESET}"
-    echo -e "  ${DIM}DevOps Bootstrapper v${DEVSETUP_VERSION}  —  github.com/devsetup${RESET}"
-    echo ""
+    echo -e "" >&2
+    # Gradient-style banner: each row a different color
+    echo -e "${INDIGO}${BOLD}  ██████╗ ███████╗██╗   ██╗███████╗███████╗████████╗██╗   ██╗██████╗ ${RESET}"
+    echo -e "${LAVENDER}${BOLD}  ██╔══██╗██╔════╝██║   ██║██╔════╝██╔════╝╚══██╔══╝██║   ██║██╔══██╗${RESET}"
+    echo -e "${BCYAN}${BOLD}  ██║  ██║█████╗  ██║   ██║█████╗  █████╗     ██║   ██║   ██║██████╔╝${RESET}"
+    echo -e "${TEAL}${BOLD}  ██║  ██║██╔══╝  ╚██╗ ██╔╝██╔══╝  ██╔══╝     ██║   ██║   ██║██╔═══╝ ${RESET}"
+    echo -e "${LIME}${BOLD}  ██████╔╝███████╗ ╚████╔╝ ███████╗███████╗   ██║   ╚██████╔╝██║     ${RESET}"
+    echo -e "${DIM}  ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝     ${RESET}"
+    echo -e ""
+    echo -e "  ${DIM}v${DEVSETUP_VERSION}${RESET}  ${DIM}·${RESET}  ${ORANGE}DevOps Bootstrapper${RESET}  ${DIM}·${RESET}  ${TEAL}github.com/Silver595/DevSetUp${RESET}"
+    echo -e ""
 }
 
 # =============================================================================
@@ -279,19 +278,41 @@ main() {
             ;;
         --list)
             _print_banner
-            echo "  Available tools:"
-            echo ""
             _load_tools_conf
-            for cat in "${!TOOL_GROUPS[@]}"; do
-                echo "  ${BOLD}${BCYAN}[$cat]${RESET}"
+
+            # Category color map
+            declare -A CAT_COLORS=(
+                [DevOps]="$TEAL"       [IaC]="$ORANGE"    [Cloud]="$INDIGO"
+                [WebServer]="$LIME"   [PHP]="$LAVENDER"  [Database]="$CORAL"
+                [Languages]="$YELLOW" [VCS]="$BCYAN"     [Utils]="$PINK"
+            )
+            declare -A CAT_ICONS=(
+                [DevOps]="⎈"  [IaC]="⛌"     [Cloud]="☁"   [WebServer]="︎"  [PHP]="λ"
+                [Database]="▣" [Languages]="⟨/⟩" [VCS]="⑂"  [Utils]="⚒"
+            )
+
+            local total_tools=0 installed_tools=0
+
+            # Sort categories for stable display
+            local sorted_cats; sorted_cats="$(echo "${!TOOL_GROUPS[*]}" | tr ' ' '\n' | sort)"
+            while IFS= read -r cat; do
+                local color="${CAT_COLORS[$cat]:-$TEAL}"
+                local icon="${CAT_ICONS[$cat]:- }"
+                printf "\n  ${color}${BOLD}${BG_DARK} %s %s ${RESET}\n" "$icon" "$cat"
                 for tool in ${TOOL_GROUPS[$cat]}; do
+                    (( total_tools++ ))
                     if command -v "$tool" &>/dev/null; then
-                        echo -e "    ${GREEN}${ICON_OK}${RESET}  $tool"
+                        (( installed_tools++ ))
+                        printf "    ${BGREEN}${ICON_OK}${RESET}  ${GREEN}%-18s${RESET} ${DIM}%s${RESET}\n" \
+                            "$tool" "$(command -v "$tool")"
                     else
-                        echo -e "    ${DIM}○${RESET}  $tool"
+                        printf "    ${DIM}◦${RESET}  ${DIM}%-18s${RESET}\n" "$tool"
                     fi
                 done
-            done
+            done <<< "$sorted_cats"
+
+            echo ""
+            printf "  ${DIM}%d / %d tools already installed${RESET}\n" "$installed_tools" "$total_tools"
             echo ""
             ;;
         --dry-run)
