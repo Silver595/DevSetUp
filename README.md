@@ -22,11 +22,11 @@
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/you/devsetup.git
-cd devsetup
+git clone https://github.com/silver595/DevSetUp.git
+cd DevSetUp
 ./devsetup
 ```
-
+`
 ---
 
 ## 📖 Usage
