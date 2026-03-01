@@ -26,7 +26,7 @@ git clone https://github.com/silver595/DevSetUp.git
 cd DevSetUp
 ./devsetup
 ```
-`
+
 ---
 
 ## 📖 Usage

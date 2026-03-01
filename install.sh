@@ -12,11 +12,11 @@
 # =============================================================================
 set -euo pipefail
 
-REPO_URL="https://github.com/YOU/devsetup"            # ← change to your repo
-RAW_URL="https://raw.githubusercontent.com/YOU/devsetup/main"  # ← same
+REPO_URL="https://github.com/Silver595/DevSetUp"
+RAW_URL="https://raw.githubusercontent.com/Silver595/DevSetUp/main"
 INSTALL_BIN="/usr/local/bin/devsetup"
 INSTALL_SHARE="/usr/share/devsetup"
-VERSION="1.0.0"
+INSTALLER_VERSION="1.0.0"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -34,7 +34,7 @@ SUDO_CMD=""
 command -v curl &>/dev/null || die "curl is required. Install it first: sudo apt install curl"
 
 echo ""
-echo -e "${BOLD}  DevSetup Installer v${VERSION}${RESET}"
+echo -e "${BOLD}  DevSetup Installer v${INSTALLER_VERSION}${RESET}"
 echo "  ─────────────────────────────────"
 echo ""
 
