@@ -229,11 +229,11 @@ devsetup --status
   ╭────────────────────────────────────────────╮
   │          Installed Tool Versions           │
   ├────────────────────────────────────────────┤
-  │  ✔  docker           26.1.4               │
-  │  ✔  kubectl          v1.29.3              │
-  │  ✔  git              2.43.0               │
-  │  ✔  python3          3.12.2               │
-  │  ✔  jq               jq-1.7              │
+  │  ✔  docker           26.1.4                │
+  │  ✔  kubectl          v1.29.3               │
+  │  ✔  git              2.43.0                │
+  │  ✔  python3          3.12.2                │
+  │  ✔  jq               jq-1.7               │
   ╰────────────────────────────────────────────╯
 ```
 
@@ -255,11 +255,11 @@ devsetup --dry-run --install docker nginx postgresql golang
    4/4   golang      → [dry-run] Would install: golang
 
   ╭─ Installation Summary ─────────────────────╮
-  │  ✔  docker (would install)                │
-  │  ✔  nginx (would install)                 │
-  │  ✔  golang (would install)                │
-  │  ⊘  postgresql                            │
-  │  3 ok  0 failed  1 skipped               │
+  │  ✔  docker (would install)                 │
+  │  ✔  nginx (would install)                  │
+  │  ✔  golang (would install)                 │
+  │  ⊘  postgresql                             │
+  │  3 ok  0 failed  1 skipped                 │
   ╰────────────────────────────────────────────╯
 ```
 
