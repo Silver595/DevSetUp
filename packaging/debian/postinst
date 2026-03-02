@@ -1,11 +1,23 @@
 #!/bin/bash
-# postinst — runs after dpkg installs the package
+# postinst — runs after dpkg installs or upgrades the package
 set -e
 
 case "$1" in
-    configure)
+    configure|upgrade)
         # Ensure lib scripts are executable
         chmod +x /usr/share/devsetup/lib/*.sh 2>/dev/null || true
+
+        # If a legacy /usr/local/bin/devsetup exists from a curl install,
+        # remove it so the .deb-managed /usr/bin/devsetup takes precedence
+        if [[ -f /usr/local/bin/devsetup && -f /usr/bin/devsetup ]]; then
+            rm -f /usr/local/bin/devsetup
+            echo "  Removed legacy /usr/local/bin/devsetup — using package version."
+        fi
+
+        echo ""
+        echo "  devsetup $(devsetup --version 2>/dev/null || echo '1.0.3') installed."
+        echo "  Run:  devsetup"
+        echo ""
         ;;
 esac
 

@@ -1,16 +1,25 @@
 #!/bin/bash
-# prerm — runs before dpkg removes the package
+# prerm — runs before dpkg removes or upgrades the package
 set -e
 
 case "$1" in
     remove|purge)
-        # Remove injected aliases from any shell RCs if user runs purge
+        # Clean aliases from shell RC files on full removal
         for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish"; do
             if [[ -f "$rc" ]] && grep -q '# >>> devsetup aliases >>>' "$rc" 2>/dev/null; then
                 sed -i '/# >>> devsetup aliases >>>/,/# <<< devsetup aliases <<</d' "$rc"
                 echo "  Removed devsetup aliases from $rc"
             fi
         done
+        # Remove any legacy bin installed outside /usr/bin (e.g. /usr/local/bin from curl install)
+        rm -f /usr/local/bin/devsetup 2>/dev/null || true
+        # Remove any lock file
+        rm -f /tmp/devsetup.lock 2>/dev/null || true
+        ;;
+    upgrade|deconfigure)
+        # On upgrade: remove old legacy binary if it exists alongside
+        rm -f /usr/local/bin/devsetup 2>/dev/null || true
+        rm -f /tmp/devsetup.lock 2>/dev/null || true
         ;;
 esac
 
