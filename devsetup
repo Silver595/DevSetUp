@@ -37,7 +37,7 @@ unset _lib
 DRY_RUN="${DRY_RUN:-false}"
 export DRY_RUN
 
-DEVSETUP_VERSION="1.0.4"
+DEVSETUP_VERSION="1.0.5"
 
 # ── Lock file (prevent concurrent runs) ──────────────────────────────────────
 LOCK_FILE="/tmp/devsetup.lock"
@@ -268,9 +268,9 @@ run_interactive() {
 
     # Brief non-blocking doctor
     log_section "Pre-flight"
-    check_internet 2>/dev/null || log_warn "Internet may be offline — installs could fail."
+    check_internet || log_warn "Internet offline — installs will fail."
     check_sudo; check_disk_space /; check_pkg_lock
-    printf "\n" >&2
+    echo >&2
 
     # Temp file: all TUI backends write their selection here directly (no subshell tricks)
     _tui_out_file="$(mktemp /tmp/devsetup_sel.XXXXXX)"
