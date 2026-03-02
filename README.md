@@ -11,7 +11,7 @@
 
 **One-command setup for your entire DevOps environment.**
 
-[![Version](https://img.shields.io/badge/version-1.1.0-indigo?style=flat-square)](https://github.com/Silver595/DevSetUp/releases)
+[![Version](https://img.shields.io/badge/version-1.0.1-indigo?style=flat-square)](https://github.com/Silver595/DevSetUp/releases)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-bash%204%2B-blue?style=flat-square)](https://www.gnu.org/software/bash/)
 [![OS](https://img.shields.io/badge/OS-Debian%20·%20Ubuntu%20·%20Fedora%20·%20Arch-orange?style=flat-square)](#-supported-operating-systems)
