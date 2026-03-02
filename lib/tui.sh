@@ -213,6 +213,7 @@ _tui_bash() {
 
     # Collect tool names and write to output file
     local -a result=()
+    local idx
     for idx in "${selected[@]}"; do
         [[ -n "${items[$idx]:-}" ]] && result+=("${items[$idx]}")
     done

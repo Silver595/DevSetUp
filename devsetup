@@ -107,41 +107,38 @@ _print_banner() {
 # =============================================================================
 _print_help() {
     _print_banner
-    cat >&2 <<EOF
-${BWHITE}${BOLD}USAGE${RESET}
-  devsetup [OPTIONS]
+    printf "${BWHITE}${BOLD}USAGE${RESET}\n" >&2
+    printf "  devsetup [OPTIONS]\n\n" >&2
 
-${BWHITE}${BOLD}INSTALL / MANAGE${RESET}
-  ${TEAL}(none)${RESET}                     Launch interactive TUI tool selector
-  ${TEAL}--install${RESET} TOOL [...]        Install one or more tools
-  ${TEAL}--update${RESET}  TOOL [...]        Update tools to latest
-  ${TEAL}--uninstall${RESET} TOOL [...]      Remove tools
+    printf "${BWHITE}${BOLD}INSTALL / MANAGE${RESET}\n" >&2
+    printf "  ${TEAL}(no args)${RESET}                  Launch interactive TUI tool selector\n" >&2
+    printf "  ${TEAL}--install${RESET} TOOL [...]        Install one or more tools\n" >&2
+    printf "  ${TEAL}--update${RESET}  TOOL [...]        Update tools to latest version\n" >&2
+    printf "  ${TEAL}--uninstall${RESET} TOOL [...]      Remove tools from the system\n\n" >&2
 
-${BWHITE}${BOLD}INFORMATION${RESET}
-  ${LAVENDER}--status${RESET}                   Show versions of all installed tools
-  ${LAVENDER}--doctor${RESET}                   Pre-flight: internet, sudo, disk, apt lock
-  ${LAVENDER}--list${RESET}                     List all installable tools with status
+    printf "${BWHITE}${BOLD}INFORMATION${RESET}\n" >&2
+    printf "  ${LAVENDER}--status${RESET}                   Versions of all installed tools\n" >&2
+    printf "  ${LAVENDER}--doctor${RESET}                   Pre-flight: internet, sudo, disk, apt lock\n" >&2
+    printf "  ${LAVENDER}--list${RESET}                     All installable tools with install status\n\n" >&2
 
-${BWHITE}${BOLD}SETUP${RESET}
-  ${LAVENDER}--git-config${RESET}               Interactive Git global configuration wizard
-  ${LAVENDER}--aliases${RESET}                  Inject 40+ DevOps aliases into .bashrc / .zshrc
-  ${LAVENDER}--scaffold [NAME]${RESET}          Create DevOps project folder structure
-  ${LAVENDER}--dry-run [CMD...]${RESET}         Preview all actions — nothing is changed
+    printf "${BWHITE}${BOLD}SETUP${RESET}\n" >&2
+    printf "  ${LAVENDER}--git-config${RESET}               Interactive Git global config wizard\n" >&2
+    printf "  ${LAVENDER}--aliases${RESET}                  Inject 40+ DevOps aliases into .bashrc/.zshrc\n" >&2
+    printf "  ${LAVENDER}--scaffold [NAME]${RESET}          Create DevOps project folder structure\n" >&2
+    printf "  ${LAVENDER}--dry-run [CMD...]${RESET}         Preview actions without changing anything\n\n" >&2
 
-${BWHITE}${BOLD}OTHER${RESET}
-  ${DIM}--version${RESET}                  Print version string
-  ${DIM}--help, -h${RESET}                 Show this message
+    printf "${BWHITE}${BOLD}OTHER${RESET}\n" >&2
+    printf "  ${DIM}--version${RESET}                  Print version\n" >&2
+    printf "  ${DIM}--help, -h${RESET}                 Show this help\n\n" >&2
 
-${BWHITE}${BOLD}EXAMPLES${RESET}
-  devsetup                              # TUI: pick tools interactively
-  devsetup --install docker nginx       # Install two tools at once
-  devsetup --dry-run --install golang   # Preview without installing
-  devsetup --doctor                     # Check system readiness
-  devsetup --status                     # See what's installed
-  devsetup --scaffold my-api            # Scaffold a new project
+    printf "${BWHITE}${BOLD}EXAMPLES${RESET}\n" >&2
+    printf "  devsetup                          # TUI: pick tools interactively\n" >&2
+    printf "  devsetup --install docker nginx   # Install specific tools\n" >&2
+    printf "  devsetup --dry-run --install k9s  # Preview without installing\n" >&2
+    printf "  devsetup --doctor                 # Check system readiness\n" >&2
+    printf "  devsetup --uninstall nginx        # Remove nginx\n\n" >&2
 
-${DIM}Log file: $LOG_FILE${RESET}
-EOF
+    printf "${DIM}Full log: %s${RESET}\n\n" "$LOG_FILE" >&2
 }
 
 # =============================================================================
@@ -267,31 +264,29 @@ _print_list() {
 run_interactive() {
     _load_tools_conf
     detect_os
-
     _print_banner
 
-    # Brief doctor (non-blocking)
+    # Brief non-blocking doctor
     log_section "Pre-flight"
     check_internet || log_warn "Internet offline — installs will fail."
     check_sudo; check_disk_space /; check_pkg_lock
     echo >&2
 
-    # ── Run TUI directly on the terminal (no subshell/redirect magic) ──────────
-    # Write TUI selection to a temp file to avoid capturing stderr
-    local _sel_file; _sel_file="$(mktemp /tmp/devsetup_sel.XXXXXX)"
-    trap 'rm -f "$_sel_file"' RETURN
+    # Temp file: all TUI backends write their selection here directly (no subshell tricks)
+    _tui_out_file="$(mktemp /tmp/devsetup_sel.XXXXXX)"
+    export _tui_out_file
 
-    if ! tui_select_tools_to_file TOOL_GROUPS "$_sel_file"; then
+    if ! tui_select_tools TOOL_GROUPS; then
         log_info "No tools selected. Exiting."
-        rm -f "$_sel_file"
+        rm -f "$_tui_out_file"; unset _tui_out_file
         exit 0
     fi
 
-    local selected_raw; selected_raw="$(cat "$_sel_file" 2>/dev/null || echo '')"
-    rm -f "$_sel_file"
+    local selected_raw; selected_raw="$(cat "$_tui_out_file" 2>/dev/null || echo '')"
+    rm -f "$_tui_out_file"; unset _tui_out_file
 
     local -a selected_tools=()
-    [[ -n "$selected_raw" ]] && IFS=' ' read -ra selected_tools <<< "$selected_raw"
+    [[ -n "${selected_raw// /}" ]] && IFS=' ' read -ra selected_tools <<< "$selected_raw"
 
     if [[ ${#selected_tools[@]} -eq 0 ]]; then
         log_info "No tools selected. Exiting."; exit 0
@@ -308,10 +303,10 @@ run_interactive() {
     tui_confirm "Inject DevOps shell aliases into your RC file?" \
         && inject_aliases "$CONF_DIR/aliases.conf"
 
-    tui_confirm "Scaffold a new DevOps project folder structure?" \
+    tui_confirm "Scaffold a DevOps project folder structure?" \
         && scaffold_interactive "$CONF_DIR/folders.conf"
 
-    echo >&2
+    printf "\n" >&2
     log_section "All done 🚀"
     log_ok "Open a new terminal or run: source ~/.bashrc"
     log_info "Full log: $LOG_FILE"
