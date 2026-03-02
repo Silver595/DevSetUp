@@ -272,10 +272,8 @@ run_interactive() {
 
     # Brief doctor (non-blocking)
     log_section "Pre-flight"
-    check_internet 2>/dev/null || log_warn "Internet may be offline — installs could fail."
-    check_sudo
-    check_disk_space /
-    check_pkg_lock
+    check_internet || log_warn "Internet offline — installs will fail."
+    check_sudo; check_disk_space /; check_pkg_lock
     echo >&2
 
     # ── Run TUI directly on the terminal (no subshell/redirect magic) ──────────
