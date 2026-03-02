@@ -38,8 +38,8 @@ devsetup
 ### Option 2 — `.deb` package (Debian / Ubuntu)
 
 ```bash
-curl -fsSLO https://github.com/Silver595/DevSetUp/releases/latest/download/devsetup_1.1.0_all.deb
-sudo dpkg -i devsetup_1.1.0_all.deb
+curl -fsSLO https://github.com/Silver595/DevSetUp/releases/latest/download/devsetup_1.0.5_all.deb
+sudo dpkg -i devsetup_1.0.5_all.deb
 ```
 
 ### Option 3 — Clone & run
