@@ -2,9 +2,9 @@
 #  Makefile — devsetup build & packaging helpers
 # =============================================================================
 NAME        := devsetup
-VERSION     := 1.0.0
+VERSION     := 1.0.2
 ARCH        := all
-MAINTAINER  := Your Name <you@example.com>
+MAINTAINER  := akashpurjalkar66@gmail.com <[EMAIL_ADDRESS]>
 DESCRIPTION := DevOps bootstrapper — interactive installer for Docker, kubectl, Terraform, AWS CLI, Helm, Node.js, Python, Git and more.
 
 PREFIX      ?= /usr/local
