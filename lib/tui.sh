@@ -7,12 +7,14 @@
 # =============================================================================
 
 # ── Detect backend ────────────────────────────────────────────────────────────
+# Pure-bash TUI is the default — works in sudo, SSH, any terminal.
+# Override with: DEVSETUP_TUI=whiptail devsetup
 _tui_detect_backend() {
-    if   command -v whiptail &>/dev/null; then echo "whiptail"
-    elif command -v dialog   &>/dev/null; then echo "dialog"
-    elif command -v fzf      &>/dev/null; then echo "fzf"
-    else                                       echo "bash"
+    local pref="${DEVSETUP_TUI:-}"
+    if [[ -n "$pref" ]] && command -v "$pref" &>/dev/null; then
+        echo "$pref"; return
     fi
+    echo "bash"   # pure-bash always works
 }
 TUI_BACKEND="$(_tui_detect_backend)"
 
@@ -194,21 +196,19 @@ _tui_whiptail() {
     local -a args=() sorted_cats=()
     IFS=$'\n' read -ra sorted_cats <<< "$(printf '%s\n' "${!_g[@]}" | sort)"
     for cat in "${sorted_cats[@]}"; do
-        args+=("--- [$cat] ---" "" "OFF")
         for tool in ${_g[$cat]}; do
             local state="OFF"
             command -v "$tool" &>/dev/null && state="ON"
-            args+=("$tool" "$cat" "$state")
+            args+=("$tool" "[$cat]" "$state")
         done
     done
     local _tmp; _tmp="$(mktemp)"
     whiptail --title "devsetup — Tool Selector" \
-        --checklist "Space to toggle, Enter to confirm:" \
+        --checklist "Space=toggle  Enter=confirm  Esc=cancel:" \
         30 65 20 "${args[@]}" 2>"$_tmp"
     local rc=$?
     if [[ $rc -eq 0 ]]; then
-        # Strip quotes and remove separator entries
-        tr -d '"' < "$_tmp" | tr ' ' '\n' | grep -v '^---' | grep -v '^\[' \
+        tr -d '"' < "$_tmp" | tr ' ' '\n' | grep -v '^\s*$' \
             | tr '\n' ' ' > "$_tui_out_file"
     fi
     rm -f "$_tmp"

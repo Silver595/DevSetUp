@@ -37,7 +37,7 @@ unset _lib
 DRY_RUN="${DRY_RUN:-false}"
 export DRY_RUN
 
-DEVSETUP_VERSION="1.0.3"
+DEVSETUP_VERSION="1.0.4"
 
 # ── Lock file (prevent concurrent runs) ──────────────────────────────────────
 LOCK_FILE="/tmp/devsetup.lock"
