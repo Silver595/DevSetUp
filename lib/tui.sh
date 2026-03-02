@@ -210,51 +210,72 @@ tui_bash_select() {
     echo "${result[*]}"
 }
 
-# ── Main TUI selector (backend dispatch) ──────────────────────────────────────
+# ── Main TUI selector: writes result to stdout (for pipeline use) ─────────────
 tui_select_tools() {
     local -n _g="$1"
 
     case "$TUI_BACKEND" in
         whiptail|dialog)
-            # Build checklist args
-            local args=()
-            local sorted_cats=()
+            local args=() sorted_cats=()
             IFS=$'\n' read -ra sorted_cats <<< "$(printf '%s\n' "${!_g[@]}" | sort)"
             for cat in "${sorted_cats[@]}"; do
                 args+=("--- [${cat}] ---" "" "OFF")
-                for tool in ${_g[$cat]}; do
-                    local state="OFF"
-                    args+=("$tool" "" "$state")
-                done
+                for tool in ${_g[$cat]}; do args+=("$tool" "$cat" "OFF"); done
             done
             local selected
             if [[ "$TUI_BACKEND" == "whiptail" ]]; then
                 selected=$(whiptail --title "devsetup — Tool Selector" \
                     --checklist "Space to toggle, Enter to confirm:" \
-                    30 60 20 "${args[@]}" 3>&1 1>&2 2>&3)
+                    30 65 20 "${args[@]}" 3>&1 1>&2 2>&3)
             else
                 selected=$(dialog --title "devsetup — Tool Selector" \
                     --checklist "Space to toggle, Enter to confirm:" \
-                    30 60 20 "${args[@]}" 2>&1 >/dev/tty)
+                    30 65 20 "${args[@]}" 2>&1 >/dev/tty)
             fi
             [[ -z "$selected" ]] && return 1
-            echo "${selected//\"/}"
+            # strip category separators and quotes
+            echo "$selected" | tr -d '"' | tr ' ' '\n' \
+                | grep -v '^---' | grep -v '^\[' | tr '\n' ' '
             ;;
         fzf)
             local -a all_tools=()
-            for cat in "${!_g[@]}"; do
-                for tool in ${_g[$cat]}; do all_tools+=("[$cat] $tool"); done
+            local sorted_cats=()
+            IFS=$'\n' read -ra sorted_cats <<< "$(printf '%s\n' "${!_g[@]}" | sort)"
+            for cat in "${sorted_cats[@]}"; do
+                for tool in ${_g[$cat]}; do
+                    all_tools+=("$(printf '%-12s  %s' "[$cat]" "$tool")")
+                done
             done
-            local chosen
-            chosen=$(printf '%s\n' "${all_tools[@]}" \
-                | fzf --multi --prompt="Select tools (Tab to multi-select): " \
-                      --header="devsetup — Space or Tab to select" \
-                      --height=80% --border=rounded --layout=reverse \
-                | awk '{print $2}') || return 1
-            echo "$chosen"
+            printf '%s\n' "${all_tools[@]}" \
+                | fzf --multi \
+                      --prompt="  Search tools > " \
+                      --header="devsetup  |  Tab/Space select  ·  Enter confirm  ·  Esc cancel" \
+                      --height=90% --border=rounded --layout=reverse \
+                      --color='header:italic,border:blue' \
+                | awk '{print $NF}' | tr '\n' ' ' || return 1
             ;;
         bash)
             tui_bash_select "$1"
+            ;;
+    esac
+}
+
+# ── TUI selector that writes result to a file (avoids subshell redirect issues) ──
+# This is what run_interactive uses so the TUI renders properly on screen.
+tui_select_tools_to_file() {
+    local var_name="$1"
+    local out_file="$2"
+
+    case "$TUI_BACKEND" in
+        whiptail|dialog|fzf)
+            # These write to /dev/tty themselves — safe to capture stdout
+            local result; result="$(tui_select_tools "$var_name")" || return 1
+            echo "$result" > "$out_file"
+            ;;
+        bash)
+            # Pure-bash TUI renders on >&2; result on stdout — safe to capture
+            local result; result="$(tui_bash_select "$var_name")" || return 1
+            echo "$result" > "$out_file"
             ;;
     esac
 }

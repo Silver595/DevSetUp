@@ -16,7 +16,7 @@ REPO_URL="https://github.com/Silver595/DevSetUp"
 RAW_URL="https://raw.githubusercontent.com/Silver595/DevSetUp/main"
 INSTALL_BIN="/usr/local/bin/devsetup"
 INSTALL_SHARE="/usr/share/devsetup"
-INSTALLER_VERSION="1.0.0"
+INSTALLER_VERSION="1.0.3"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -76,8 +76,11 @@ fi
 info "Installing devsetup to $INSTALL_BIN ..."
 $SUDO_CMD mkdir -p "$INSTALL_SHARE/lib" "$INSTALL_SHARE/config"
 
-# Rewrite DEVSETUP_DIR inside the script to point to installed location
-sed "s|^DEVSETUP_DIR=.*|DEVSETUP_DIR=\"${INSTALL_SHARE}\"|" \
+# Rewrite path vars so the installed binary finds its libraries
+sed \
+    -e "s|^DEVSETUP_DIR=.*|DEVSETUP_DIR=\"${INSTALL_SHARE}\"|" \
+    -e "s|^LIB_DIR=.*|LIB_DIR=\"\${DEVSETUP_DIR}/lib\"|" \
+    -e "s|^CONF_DIR=.*|CONF_DIR=\"\${DEVSETUP_DIR}/config\"|" \
     "$SRC/devsetup" > "$TMP_DIR/devsetup_patched"
 
 $SUDO_CMD install -m 755 "$TMP_DIR/devsetup_patched" "$INSTALL_BIN"
