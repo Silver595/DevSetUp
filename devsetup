@@ -1,52 +1,65 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  devsetup — DevOps Bootstrapper  v1.0.3
-#
-#  Usage:
-#    devsetup                          Interactive TUI tool selector
-#    devsetup --install TOOL [...]     Install specific tools
-#    devsetup --update  TOOL [...]     Re-install / update tools
-#    devsetup --uninstall TOOL [...]   Remove tools
-#    devsetup --status                 Show installed versions
-#    devsetup --doctor                 Pre-flight system check
-#    devsetup --list                   List all available tools
-#    devsetup --git-config             Git configuration wizard
-#    devsetup --aliases                Inject shell aliases
-#    devsetup --scaffold [NAME]        Create project folder structure
-#    devsetup --dry-run [CMD...]       Preview without making changes
-#    devsetup --help                   Show help
-#    devsetup --version                Print version
+# devsetup — Interactive DevOps Bootstrapper for Linux
+# Version: 1.1.0
+# https://github.com/Silver595/DevSetUp
 # =============================================================================
-# Never use set -e — install sub-commands can legitimately return non-zero
 set -uo pipefail
 
-# ── Resolve install location (symlink-safe) ───────────────────────────────────
+DEVSETUP_VERSION="1.1.0"
 DEVSETUP_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-LIB_DIR="$DEVSETUP_DIR/lib"
-CONF_DIR="$DEVSETUP_DIR/config"
+LIB_DIR="${DEVSETUP_DIR}/lib"
+CONF_DIR="${DEVSETUP_DIR}/config"
 
-# ── Source library modules ────────────────────────────────────────────────────
-for _lib in logger detect install aliases scaffold tui; do
-    # shellcheck source=/dev/null
-    source "$LIB_DIR/${_lib}.sh" \
-        || { echo "ERROR: cannot load lib/${_lib}.sh — is devsetup installed correctly?" >&2; exit 1; }
-done
-unset _lib
+# ── Minimum bash version check ───────────────────────────────────────────────
+if (( BASH_VERSINFO[0] < 4 )); then
+    echo "ERROR: devsetup requires bash 4.0+ (you have $BASH_VERSION)" >&2
+    echo "       Install a newer bash: sudo apt install bash" >&2
+    exit 1
+fi
 
-# ── Global flags ──────────────────────────────────────────────────────────────
+# ── Verify library files exist ────────────────────────────────────────────────
+_verify_libs() {
+    local missing=()
+    for lib in logger.sh detect.sh install.sh aliases.sh scaffold.sh tui.sh; do
+        [[ -f "${LIB_DIR}/${lib}" ]] || missing+=("$lib")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "FATAL: Missing library files in ${LIB_DIR}: ${missing[*]}" >&2
+        echo "       Reinstall devsetup or check your installation." >&2
+        exit 1
+    fi
+}
+_verify_libs
+
+# ── Source libraries (order matters!) ─────────────────────────────────────────
+# shellcheck source=lib/logger.sh
+source "${LIB_DIR}/logger.sh"
+# shellcheck source=lib/detect.sh
+source "${LIB_DIR}/detect.sh"
+# shellcheck source=lib/install.sh
+source "${LIB_DIR}/install.sh"
+# shellcheck source=lib/aliases.sh
+source "${LIB_DIR}/aliases.sh"
+# shellcheck source=lib/scaffold.sh
+source "${LIB_DIR}/scaffold.sh"
+# shellcheck source=lib/tui.sh
+source "${LIB_DIR}/tui.sh"
+
+# ── Global state ──────────────────────────────────────────────────────────────
 DRY_RUN="${DRY_RUN:-false}"
 export DRY_RUN
-
-DEVSETUP_VERSION="1.0.4"
-
-# ── Lock file (prevent concurrent runs) ──────────────────────────────────────
 LOCK_FILE="/tmp/devsetup.lock"
+LOCK_FD=9
+declare -A TOOL_GROUPS=()
+_PKG_UPDATED=false    # track if pkg index was refreshed this session
 
+# ── Lock management ───────────────────────────────────────────────────────────
 _acquire_lock() {
     exec 9>"$LOCK_FILE"
-    if ! flock -n 9 2>/dev/null; then
-        echo -e "${BRED}✘  Another devsetup process is already running.${RESET}" >&2
-        echo -e "${DIM}   If that's wrong, delete the lock: sudo rm $LOCK_FILE${RESET}" >&2
+    if ! flock -n 9; then
+        log_error "Another devsetup instance is running (lock: $LOCK_FILE)"
+        log_info  "If you're sure no other instance is running: rm -f $LOCK_FILE"
         exit 1
     fi
 }
@@ -56,284 +69,558 @@ _release_lock() {
     rm -f "$LOCK_FILE" 2>/dev/null || true
 }
 
-# ── Traps: clean exit + Ctrl+C ────────────────────────────────────────────────
+# ── Cleanup traps ─────────────────────────────────────────────────────────────
 _on_exit() {
     local rc=$?
-    [[ -n "${_SPINNER_PID:-}" ]] && {
+    # Kill any leftover spinner
+    if [[ -n "${_SPINNER_PID:-}" ]]; then
         kill "$_SPINNER_PID" 2>/dev/null || true
         wait "$_SPINNER_PID" 2>/dev/null || true
-        printf "\r\033[2K" >&2
-    }
+        _SPINNER_PID=""
+    fi
     _release_lock
-    exit $rc
+    # Clean temp files
+    rm -f /tmp/devsetup_tui_*.tmp 2>/dev/null || true
+    return $rc
 }
 
 _on_abort() {
-    # Restore terminal state in case TUI left it raw
+    echo "" >&2
+    # Restore terminal state if TUI was running
     stty sane 2>/dev/null || true
     tput cnorm 2>/dev/null || true
-    printf "\r\033[2K" >&2
-    echo -e "" >&2
-    echo -e "  ${GOLD}${BOLD}⚠  Aborted (Ctrl+C).${RESET}  ${DIM}Check $LOG_FILE for details.${RESET}" >&2
-    echo -e "" >&2
+    printf '\033[H\033[2J' >&2 2>/dev/null || true
+
+    log_warn "Interrupted by user (Ctrl+C)"
+
+    # Print partial summary if we have any results
     if (( ${#_SUMMARY_OK[@]} + ${#_SUMMARY_FAIL[@]} + ${#_SUMMARY_SKIP[@]} > 0 )); then
         log_summary
     fi
+
     _release_lock
+    rm -f /tmp/devsetup_tui_*.tmp 2>/dev/null || true
     exit 130
 }
 
-trap '_on_exit'  EXIT
-trap '_on_abort' INT TERM
+trap _on_exit EXIT
+trap _on_abort INT TERM
 
-# =============================================================================
 # ── Banner ────────────────────────────────────────────────────────────────────
-# =============================================================================
 _print_banner() {
-    echo -e "" >&2
-    echo -e "${INDIGO}${BOLD}  ██████╗ ███████╗██╗   ██╗███████╗███████╗████████╗██╗   ██╗██████╗ ${RESET}" >&2
-    echo -e "${LAVENDER}${BOLD}  ██╔══██╗██╔════╝██║   ██║██╔════╝██╔════╝╚══██╔══╝██║   ██║██╔══██╗${RESET}" >&2
-    echo -e "${BCYAN}${BOLD}  ██║  ██║█████╗  ██║   ██║███████╗█████╗     ██║   ██║   ██║██████╔╝${RESET}" >&2
-    echo -e "${TEAL}${BOLD}  ██║  ██║██╔══╝  ╚██╗ ██╔╝╚════██║██╔══╝     ██║   ██║   ██║██╔═══╝ ${RESET}" >&2
-    echo -e "${LIME}${BOLD}  ██████╔╝███████╗ ╚████╔╝ ███████║███████╗   ██║   ╚██████╔╝██║     ${RESET}" >&2
-    echo -e "${DIM}  ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝     ${RESET}" >&2
-    echo -e "" >&2
-    echo -e "  ${DIM}v${DEVSETUP_VERSION}${RESET}  ${DIM}·${RESET}  ${ORANGE}DevOps Bootstrapper${RESET}  ${DIM}·${RESET}  ${TEAL}github.com/Silver595/DevSetUp${RESET}" >&2
-    echo -e "" >&2
+    cat >&2 <<'BANNER'
+
+     ██████╗ ███████╗██╗   ██╗███████╗███████╗████████╗██╗   ██╗██████╗
+     ██╔══██╗██╔════╝██║   ██║██╔════╝██╔════╝╚══██╔══╝██║   ██║██╔══██╗
+     ██║  ██║█████╗  ██║   ██║███████╗█████╗     ██║   ██║   ██║██████╔╝
+     ██║  ██║██╔══╝  ╚██╗ ██╔╝╚════██║██╔══╝     ██║   ██║   ██║██╔═══╝
+     ██████╔╝███████╗ ╚████╔╝ ███████║███████╗   ██║   ╚██████╔╝██║
+     ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝
+
+BANNER
+    printf "  ${TEAL}${BOLD}devsetup${RESET} ${DIM}v${DEVSETUP_VERSION}${RESET}  ${DIM}—${RESET}  ${DIM}Interactive DevOps Bootstrapper${RESET}\n\n" >&2
 }
 
-# =============================================================================
 # ── Help ──────────────────────────────────────────────────────────────────────
-# =============================================================================
 _print_help() {
     _print_banner
-    printf "${BWHITE}${BOLD}USAGE${RESET}\n" >&2
-    printf "  devsetup [OPTIONS]\n\n" >&2
+    printf "  ${BWHITE}${BOLD}USAGE${RESET}\n"
+    printf "    devsetup ${DIM}[COMMAND] [OPTIONS]${RESET}\n\n"
 
-    printf "${BWHITE}${BOLD}INSTALL / MANAGE${RESET}\n" >&2
-    printf "  ${TEAL}(no args)${RESET}                  Launch interactive TUI tool selector\n" >&2
-    printf "  ${TEAL}--install${RESET} TOOL [...]        Install one or more tools\n" >&2
-    printf "  ${TEAL}--update${RESET}  TOOL [...]        Update tools to latest version\n" >&2
-    printf "  ${TEAL}--uninstall${RESET} TOOL [...]      Remove tools from the system\n\n" >&2
+    printf "  ${BWHITE}${BOLD}COMMANDS${RESET}\n"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "(no args)"              "Launch interactive TUI tool selector"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--install TOOL [...]"   "Install one or more tools directly"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--update TOOL [...]"    "Re-install/update tools to latest"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--uninstall TOOL [...]" "Remove tools via package manager"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--status"               "Show version table of every installed tool"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--doctor"               "Pre-flight system readiness check"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--list"                 "List all tools with installed/not-installed"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--git-config"           "Interactive Git global config wizard"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--aliases"              "Inject DevOps shell aliases"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--remove-aliases"       "Remove injected aliases"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--preview-aliases"      "Preview aliases without injecting"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--scaffold [NAME]"      "Create a DevOps project folder structure"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--preview-scaffold"     "Show scaffold tree (no creation)"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--export FILE"          "Export installed tool list to file"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--import FILE"          "Import and install tools from file"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--log [N]"              "Show last N log files (default: 5)"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--self-update"          "Update devsetup itself to latest"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--dry-run [CMD...]"     "Preview any action without changes"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--version"              "Print version string"
+    printf "    ${GREEN}%-30s${RESET} %s\n" "--help"                 "Show this help"
+    echo "" >&2
 
-    printf "${BWHITE}${BOLD}INFORMATION${RESET}\n" >&2
-    printf "  ${LAVENDER}--status${RESET}                   Versions of all installed tools\n" >&2
-    printf "  ${LAVENDER}--doctor${RESET}                   Pre-flight: internet, sudo, disk, apt lock\n" >&2
-    printf "  ${LAVENDER}--list${RESET}                     All installable tools with install status\n\n" >&2
+    printf "  ${BWHITE}${BOLD}EXAMPLES${RESET}\n"
+    printf "    devsetup --install docker nginx postgresql\n"
+    printf "    devsetup --dry-run --install terraform\n"
+    printf "    devsetup --uninstall nginx\n"
+    printf "    devsetup --doctor\n"
+    printf "    devsetup --export ~/my-tools.txt\n"
+    printf "    DEVSETUP_TUI=whiptail devsetup\n"
+    echo "" >&2
 
-    printf "${BWHITE}${BOLD}SETUP${RESET}\n" >&2
-    printf "  ${LAVENDER}--git-config${RESET}               Interactive Git global config wizard\n" >&2
-    printf "  ${LAVENDER}--aliases${RESET}                  Inject 40+ DevOps aliases into .bashrc/.zshrc\n" >&2
-    printf "  ${LAVENDER}--scaffold [NAME]${RESET}          Create DevOps project folder structure\n" >&2
-    printf "  ${LAVENDER}--dry-run [CMD...]${RESET}         Preview actions without changing anything\n\n" >&2
-
-    printf "${BWHITE}${BOLD}OTHER${RESET}\n" >&2
-    printf "  ${DIM}--version${RESET}                  Print version\n" >&2
-    printf "  ${DIM}--help, -h${RESET}                 Show this help\n\n" >&2
-
-    printf "${BWHITE}${BOLD}EXAMPLES${RESET}\n" >&2
-    printf "  devsetup                          # TUI: pick tools interactively\n" >&2
-    printf "  devsetup --install docker nginx   # Install specific tools\n" >&2
-    printf "  devsetup --dry-run --install k9s  # Preview without installing\n" >&2
-    printf "  devsetup --doctor                 # Check system readiness\n" >&2
-    printf "  devsetup --uninstall nginx        # Remove nginx\n\n" >&2
-
-    printf "${DIM}Full log: %s${RESET}\n\n" "$LOG_FILE" >&2
+    printf "  ${BWHITE}${BOLD}ENVIRONMENT${RESET}\n"
+    printf "    ${CYAN}DEVSETUP_TUI${RESET}=${DIM}whiptail|dialog|fzf|bash${RESET}  Force TUI backend\n"
+    printf "    ${CYAN}DRY_RUN${RESET}=${DIM}true${RESET}                           Enable dry-run mode\n"
+    echo "" >&2
 }
 
-# =============================================================================
-# ── Config loader ─────────────────────────────────────────────────────────────
-# =============================================================================
-declare -A TOOL_GROUPS=()
-
+# ── Load tools.conf ───────────────────────────────────────────────────────────
 _load_tools_conf() {
-    [[ ${#TOOL_GROUPS[@]} -gt 0 ]] && return 0   # already loaded
-    local conf="$CONF_DIR/tools.conf"
+    local conf="${CONF_DIR}/tools.conf"
     if [[ ! -f "$conf" ]]; then
-        log_warn "tools.conf not found at $conf"; return
+        log_error "Tools config not found: $conf"
+        return 1
     fi
-    while IFS=: read -r category tool || [[ -n "$tool" ]]; do
-        [[ -z "$category" || "$category" =~ ^# || -z "$tool" ]] && continue
-        category="${category// /}"
-        tool="${tool// /}"
-        TOOL_GROUPS["$category"]+="$tool "
-    done < <(grep -v '^\s*#' "$conf" | grep -v '^\s*$')
+
+    TOOL_GROUPS=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip blank lines and comments
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Format: CATEGORY:TOOL_NAME
+        local cat="${line%%:*}"
+        local tool="${line#*:}"
+        cat="${cat// /}"   # strip whitespace
+        tool="${tool// /}" # strip whitespace
+        [[ -z "$cat" || -z "$tool" ]] && continue
+
+        # Validate that install function exists
+        if ! declare -f "install_${tool,,}" &>/dev/null; then
+            log_warn "No install_${tool} function found — skipping '$tool' from tools.conf"
+            continue
+        fi
+
+        if [[ -n "${TOOL_GROUPS[$cat]:-}" ]]; then
+            TOOL_GROUPS[$cat]+=" $tool"
+        else
+            TOOL_GROUPS[$cat]="$tool"
+        fi
+    done < "$conf"
+
+    if [[ ${#TOOL_GROUPS[@]} -eq 0 ]]; then
+        log_error "No valid tools loaded from $conf"
+        return 1
+    fi
 }
 
-# =============================================================================
-# ── Git configuration wizard ──────────────────────────────────────────────────
-# =============================================================================
+# ── Ensure pkg index is refreshed (once per session) ─────────────────────────
+_ensure_pkg_updated() {
+    if [[ "$_PKG_UPDATED" != "true" ]]; then
+        _pkg_update
+        _PKG_UPDATED=true
+    fi
+}
+
+# ── Git config wizard ────────────────────────────────────────────────────────
 run_git_config_wizard() {
-    log_section "Git Configuration Wizard"
+    log_section "Git Global Configuration Wizard"
 
-    local cur_name;  cur_name="$(git config --global user.name  2>/dev/null || echo '')"
-    local cur_email; cur_email="$(git config --global user.email 2>/dev/null || echo '')"
-    local cur_branch; cur_branch="$(git config --global init.defaultBranch 2>/dev/null || echo 'main')"
-    local cur_editor; cur_editor="$(git config --global core.editor 2>/dev/null || echo 'vim')"
+    if ! command -v git &>/dev/null; then
+        log_error "Git is not installed. Run: devsetup --install git"
+        return 1
+    fi
 
-    echo >&2
-    local git_name;   git_name="$(tui_read "Full name"             "$cur_name")"
-    local git_email;  git_email="$(tui_read "Email"                "$cur_email")"
-    local git_branch; git_branch="$(tui_read "Default branch"      "$cur_branch")"
-    local git_editor; git_editor="$(tui_read "Preferred editor"    "$cur_editor")"
-    echo >&2
+    local current_name current_email
+    current_name="$(git config --global user.name 2>/dev/null || echo '')"
+    current_email="$(git config --global user.email 2>/dev/null || echo '')"
 
-    echo -e "  ${DIM}Settings preview:${RESET}" >&2
-    printf "  %-22s ${TEAL}%s${RESET}\n" "user.name"           "$git_name"   >&2
-    printf "  %-22s ${TEAL}%s${RESET}\n" "user.email"          "$git_email"  >&2
-    printf "  %-22s ${TEAL}%s${RESET}\n" "init.defaultBranch"  "$git_branch" >&2
-    printf "  %-22s ${TEAL}%s${RESET}\n" "core.editor"         "$git_editor" >&2
-    echo >&2
+    local name email editor
+    name="$(tui_read "Full name" "$current_name")"
+    email="$(tui_read "Email" "$current_email")"
+    editor="$(tui_read "Preferred editor" "$(git config --global core.editor 2>/dev/null || echo 'vim')")"
 
-    tui_confirm "Apply these Git settings?" || { log_skip "Git config cancelled."; return 0; }
+    if [[ -z "$name" || -z "$email" ]]; then
+        log_error "Name and email are required."
+        return 1
+    fi
 
-    run_cmd git config --global user.name              "$git_name"
-    run_cmd git config --global user.email             "$git_email"
-    run_cmd git config --global init.defaultBranch     "$git_branch"
-    run_cmd git config --global core.editor            "$git_editor"
-    run_cmd git config --global core.autocrlf          input
-    run_cmd git config --global pull.rebase            true
-    run_cmd git config --global push.autoSetupRemote   true
-    run_cmd git config --global rerere.enabled         true
-    run_cmd git config --global color.ui               auto
-    run_cmd git config --global alias.lg  "log --oneline --graph --decorate -20"
-    run_cmd git config --global alias.st  "status -sb"
-    run_cmd git config --global alias.undo "reset HEAD~1 --mixed"
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "[dry-run] Would set git config: name=$name, email=$email, editor=$editor"
+        return 0
+    fi
 
-    log_ok "Git configured."
+    git config --global user.name "$name"
+    git config --global user.email "$email"
+    git config --global core.editor "$editor"
+    git config --global init.defaultBranch main
+    git config --global pull.rebase true
+    git config --global push.autoSetupRemote true
+    git config --global color.ui auto
+
+    log_ok "Git configured for: $name <$email>"
+    log_info "Editor: $editor | Default branch: main | Pull: rebase"
 }
 
-# =============================================================================
-# ── Install list with step counter ────────────────────────────────────────────
-# =============================================================================
+# ── Install tool list with progress ──────────────────────────────────────────
 install_tool_list() {
     local -a tools=("$@")
-    local total="${#tools[@]}" n=0
+    local total=${#tools[@]}
+    local i=0 started failed=0
 
-    _pkg_update
+    if [[ $total -eq 0 ]]; then
+        log_warn "No tools to install."
+        return 0
+    fi
 
+    _ensure_pkg_updated
+
+    started="$(date +%s)"
     for tool in "${tools[@]}"; do
-        (( n++ ))
-        log_progress "$n" "$total" "$tool"
-        install_tool "$tool" || true
+        (( i++ ))
+        log_progress "$i" "$total" "$tool"
+
+        local t_start; t_start="$(date +%s)"
+        if ! install_tool "$tool"; then
+            (( failed++ ))
+        fi
+        local t_end; t_end="$(date +%s)"
+        local elapsed=$(( t_end - t_start ))
+        if (( elapsed > 2 )); then
+            log_info "  ⏱  ${tool} took ${elapsed}s"
+        fi
     done
 
-    echo >&2
-    log_summary
+    local total_time=$(( $(date +%s) - started ))
+    log_info "Total install time: ${total_time}s"
+
+    return "$failed"
 }
 
-# =============================================================================
-# ── --list display ────────────────────────────────────────────────────────────
-# =============================================================================
+# ── Print tool list with install status ───────────────────────────────────────
 _print_list() {
-    _load_tools_conf
-    declare -A CAT_COLORS=(
-        [DevOps]="$TEAL"     [IaC]="$ORANGE"    [Cloud]="$INDIGO"
-        [WebServer]="$LIME"  [PHP]="$LAVENDER"  [Database]="$CORAL"
-        [Languages]="$YELLOW" [VCS]="$BCYAN"    [Utils]="$PINK"
-    )
-    declare -A CAT_ICONS=(
-        [DevOps]="⎈" [IaC]="⛌" [Cloud]="☁"  [WebServer]="🌐" [PHP]="λ"
-        [Database]="▣" [Languages]="⟨/⟩" [VCS]="⑂" [Utils]="⚒"
-    )
-    local total_tools=0 installed_tools=0
-    local sorted_cats; sorted_cats="$(echo "${!TOOL_GROUPS[*]}" | tr ' ' '\n' | sort)"
-    while IFS= read -r cat; do
-        local color="${CAT_COLORS[$cat]:-$TEAL}"
-        local icon="${CAT_ICONS[$cat]:- }"
-        printf "\n  ${color}${BOLD}${BG_DARK}  %s %s  ${RESET}\n" "$icon" "$cat" >&2
+    _load_tools_conf || return 1
+
+    local -a sorted_cats=()
+    mapfile -t sorted_cats < <(printf '%s\n' "${!TOOL_GROUPS[@]}" | sort)
+
+    local installed=0 total=0
+
+    echo "" >&2
+    printf "  ${BWHITE}${BOLD}Available Tools${RESET}\n\n" >&2
+
+    for cat in "${sorted_cats[@]}"; do
+        printf "  ${INDIGO}${BOLD}▸ %s${RESET}\n" "$cat" >&2
         for tool in ${TOOL_GROUPS[$cat]}; do
-            (( total_tools++ ))
-            if command -v "$tool" &>/dev/null; then
-                (( installed_tools++ ))
-                printf "    ${BGREEN}${ICON_OK}${RESET}  ${GREEN}%-18s${RESET}  ${DIM}%s${RESET}\n" \
-                    "$tool" "$(command -v "$tool")" >&2
+            (( total++ ))
+            local cmd="$tool"
+            # Map tool names to their actual commands
+            case "$tool" in
+                awscli) cmd="aws" ;; azure) cmd="az" ;; ripgrep) cmd="rg" ;;
+                neovim) cmd="nvim" ;; postgresql) cmd="psql" ;; nvm) cmd="" ;;
+                phpfpm) cmd="php-fpm" ;; golang) cmd="go" ;; mysql) cmd="mysql" ;;
+            esac
+
+            local status_icon status_color
+            if [[ "$tool" == "nvm" ]]; then
+                if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+                    status_icon="${ICON_OK}"; status_color="${GREEN}"; (( installed++ ))
+                else
+                    status_icon="◦"; status_color="${DIM}"
+                fi
+            elif [[ -n "$cmd" ]] && command -v "$cmd" &>/dev/null; then
+                status_icon="${ICON_OK}"; status_color="${GREEN}"; (( installed++ ))
             else
-                printf "    ${DIM}◦${RESET}  ${DIM}%-18s${RESET}\n" "$tool" >&2
+                status_icon="◦"; status_color="${DIM}"
+            fi
+
+            printf "      ${status_color}%s${RESET}  %-16s\n" "$status_icon" "$tool" >&2
+        done
+    done
+
+    echo "" >&2
+    printf "  ${DIM}%d/%d tools installed${RESET}\n\n" "$installed" "$total" >&2
+}
+
+# ── Export / Import tool selections ───────────────────────────────────────────
+_export_tools() {
+    local outfile="${1:-devsetup-tools.txt}"
+    _load_tools_conf || return 1
+
+    local -a installed_tools=()
+    local -a sorted_cats=()
+    mapfile -t sorted_cats < <(printf '%s\n' "${!TOOL_GROUPS[@]}" | sort)
+
+    for cat in "${sorted_cats[@]}"; do
+        for tool in ${TOOL_GROUPS[$cat]}; do
+            local cmd="$tool"
+            case "$tool" in
+                awscli) cmd="aws" ;; azure) cmd="az" ;; ripgrep) cmd="rg" ;;
+                neovim) cmd="nvim" ;; postgresql) cmd="psql" ;; golang) cmd="go" ;;
+            esac
+            if [[ "$tool" == "nvm" ]]; then
+                [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]] && installed_tools+=("$tool")
+            elif command -v "$cmd" &>/dev/null; then
+                installed_tools+=("$tool")
             fi
         done
-    done <<< "$sorted_cats"
-    echo >&2
-    printf "  ${DIM}%d / %d installed${RESET}  ${DIM}│  devsetup --install TOOL to add more${RESET}\n\n" \
-        "$installed_tools" "$total_tools" >&2
+    done
+
+    if [[ ${#installed_tools[@]} -eq 0 ]]; then
+        log_warn "No tools are currently installed."
+        return 1
+    fi
+
+    printf "# devsetup tool export — %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" > "$outfile"
+    printf "# Install with: devsetup --import %s\n" "$outfile" >> "$outfile"
+    printf '%s\n' "${installed_tools[@]}" >> "$outfile"
+    log_ok "Exported ${#installed_tools[@]} tools to: $outfile"
 }
 
-# =============================================================================
-# ── Interactive TUI ───────────────────────────────────────────────────────────
-# =============================================================================
+_import_tools() {
+    local infile="$1"
+    if [[ ! -f "$infile" ]]; then
+        log_error "File not found: $infile"
+        return 1
+    fi
+
+    local -a tools=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        tools+=("${line// /}")
+    done < "$infile"
+
+    if [[ ${#tools[@]} -eq 0 ]]; then
+        log_warn "No tools found in $infile"
+        return 1
+    fi
+
+    log_info "Importing ${#tools[@]} tools from $infile: ${tools[*]}"
+
+    if tui_confirm "Install ${#tools[@]} tools?" "y"; then
+        install_tool_list "${tools[@]}"
+    else
+        log_info "Import cancelled."
+    fi
+}
+
+# ── Self-update ───────────────────────────────────────────────────────────────
+_self_update() {
+    log_section "Self-Update"
+    local repo_url="https://raw.githubusercontent.com/Silver595/DevSetUp/main"
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+        log_info "[dry-run] Would download latest version from $repo_url"
+        return 0
+    fi
+
+    # Check internet
+    if ! curl -fsSL --max-time 4 https://1.1.1.1 &>/dev/null \
+       && ! curl -fsSL --max-time 4 https://google.com &>/dev/null; then
+        log_error "No internet connection — cannot self-update."
+        return 1
+    fi
+
+    local tmp; tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' RETURN
+
+    spinner_start "Downloading latest version"
+
+    # Try git clone first, fall back to curl
+    if command -v git &>/dev/null; then
+        git clone --depth=1 "https://github.com/Silver595/DevSetUp.git" "$tmp/repo" 2>/dev/null || {
+            spinner_stop fail
+            log_error "Failed to clone repository."
+            return 1
+        }
+    else
+        mkdir -p "$tmp/repo/lib" "$tmp/repo/config"
+        local files=("devsetup" "lib/logger.sh" "lib/detect.sh" "lib/install.sh"
+                      "lib/aliases.sh" "lib/scaffold.sh" "lib/tui.sh"
+                      "config/tools.conf" "config/aliases.conf" "config/folders.conf")
+        for f in "${files[@]}"; do
+            curl -fsSL "$repo_url/$f" -o "$tmp/repo/$f" 2>/dev/null || {
+                spinner_stop fail
+                log_error "Failed to download $f"; return 1
+            }
+        done
+    fi
+
+    spinner_stop ok
+
+    # Detect where we're installed
+    local install_dir="$DEVSETUP_DIR"
+    local bin_path
+    bin_path="$(readlink -f "${BASH_SOURCE[0]}")"
+
+    # Backup current version
+    cp "$bin_path" "${bin_path}.bak" 2>/dev/null || true
+
+    # Copy new files
+    spinner_start "Installing update"
+    if [[ -w "$install_dir" ]]; then
+        cp "$tmp/repo/devsetup" "$bin_path"
+        cp "$tmp/repo/lib/"*.sh "$install_dir/lib/" 2>/dev/null || true
+        cp "$tmp/repo/config/"* "$install_dir/config/" 2>/dev/null || true
+    else
+        $SUDO cp "$tmp/repo/devsetup" "$bin_path"
+        $SUDO cp "$tmp/repo/lib/"*.sh "$install_dir/lib/" 2>/dev/null || true
+        $SUDO cp "$tmp/repo/config/"* "$install_dir/config/" 2>/dev/null || true
+    fi
+    chmod +x "$bin_path" 2>/dev/null || $SUDO chmod +x "$bin_path"
+    spinner_stop ok
+
+    # Show new version
+    local new_ver
+    new_ver="$("$bin_path" --version 2>/dev/null || echo 'unknown')"
+    log_ok "Updated to: $new_ver"
+    log_info "Previous version backed up to: ${bin_path}.bak"
+}
+
+# ── Log viewer ────────────────────────────────────────────────────────────────
+_show_logs() {
+    local count="${1:-5}"
+    local -a logs=()
+    mapfile -t logs < <(ls -1t /tmp/devsetup_*.log 2>/dev/null | head -n "$count")
+
+    if [[ ${#logs[@]} -eq 0 ]]; then
+        log_info "No devsetup log files found in /tmp/"
+        return 0
+    fi
+
+    echo "" >&2
+    printf "  ${BWHITE}${BOLD}Recent Log Files${RESET} ${DIM}(showing %d)${RESET}\n\n" "${#logs[@]}" >&2
+    for f in "${logs[@]}"; do
+        local sz; sz="$(du -h "$f" 2>/dev/null | awk '{print $1}')"
+        local ts; ts="$(stat -c '%y' "$f" 2>/dev/null | cut -d. -f1)"
+        printf "    ${CYAN}%s${RESET}  ${DIM}%s  %s${RESET}\n" "$(basename "$f")" "$sz" "$ts" >&2
+    done
+    echo "" >&2
+
+    if [[ ${#logs[@]} -gt 0 ]]; then
+        printf "  ${DIM}Latest: %s${RESET}\n\n" "${logs[0]}" >&2
+        if tui_confirm "View the latest log?" "n"; then
+            less "${logs[0]}"
+        fi
+    fi
+}
+
+# ── Interactive mode ──────────────────────────────────────────────────────────
 run_interactive() {
-    _load_tools_conf
-    detect_os
     _print_banner
 
-    # Brief non-blocking doctor
-    log_section "Pre-flight"
-    check_internet 2>/dev/null || log_warn "Internet may be offline — installs could fail."
-    check_sudo; check_disk_space /; check_pkg_lock
-    printf "\n" >&2
+    # Pre-flight checks
+    log_section "Pre-flight Checks"
+    detect_os
+    detect_print_summary
 
-    # Temp file: all TUI backends write their selection here directly (no subshell tricks)
-    _tui_out_file="$(mktemp /tmp/devsetup_sel.XXXXXX)"
+    local doctor_issues=0
+    check_internet     || (( doctor_issues++ ))
+    check_sudo
+    check_disk_space / || (( doctor_issues++ ))
+    check_pkg_manager  || (( doctor_issues++ ))
+    check_required_tools || (( doctor_issues++ ))
+    check_pkg_lock
+
+    if (( doctor_issues > 0 )); then
+        echo "" >&2
+        if ! tui_confirm "Pre-flight found ${doctor_issues} issue(s). Continue anyway?" "n"; then
+            log_info "Exiting. Fix issues and re-run."
+            return 1
+        fi
+    fi
+
+    # Load tool config
+    _load_tools_conf || return 1
+
+    # TUI tool selection
+    _tui_out_file="$(mktemp /tmp/devsetup_tui_XXXXXX.tmp)"
     export _tui_out_file
 
     if ! tui_select_tools TOOL_GROUPS; then
         log_info "No tools selected. Exiting."
-        rm -f "$_tui_out_file"; unset _tui_out_file
-        exit 0
+        rm -f "$_tui_out_file" 2>/dev/null
+        return 0
     fi
 
-    local selected_raw; selected_raw="$(cat "$_tui_out_file" 2>/dev/null || echo '')"
-    rm -f "$_tui_out_file"; unset _tui_out_file
+    local selected_raw
+    selected_raw="$(cat "$_tui_out_file" 2>/dev/null)"
+    rm -f "$_tui_out_file" 2>/dev/null
 
+    if [[ -z "${selected_raw// /}" ]]; then
+        log_info "No tools selected. Exiting."
+        return 0
+    fi
+
+    # Parse selected tools
     local -a selected_tools=()
-    [[ -n "${selected_raw// /}" ]] && IFS=' ' read -ra selected_tools <<< "$selected_raw"
+    read -ra selected_tools <<< "$selected_raw"
 
-    if [[ ${#selected_tools[@]} -eq 0 ]]; then
-        log_info "No tools selected. Exiting."; exit 0
+    log_section "Installing ${#selected_tools[@]} Tools"
+    log_info "Selected: ${selected_tools[*]}"
+    echo "" >&2
+
+    if ! tui_confirm "Proceed with installation?" "y"; then
+        log_info "Installation cancelled."
+        return 0
     fi
 
-    log_section "Installing: ${selected_tools[*]}"
-
-    if printf '%s\n' "${selected_tools[@]}" | grep -qi '^git$'; then
-        tui_confirm "Run the Git configuration wizard?" && run_git_config_wizard
-    fi
-
+    # Install
     install_tool_list "${selected_tools[@]}"
 
-    tui_confirm "Inject DevOps shell aliases into your RC file?" \
-        && inject_aliases "$CONF_DIR/aliases.conf"
+    # Print summary
+    log_summary
 
-    tui_confirm "Scaffold a DevOps project folder structure?" \
-        && scaffold_interactive "$CONF_DIR/folders.conf"
+    # Offer aliases
+    echo "" >&2
+    if tui_confirm "Inject DevOps shell aliases into your shell config?" "y"; then
+        inject_aliases "${CONF_DIR}/aliases.conf"
+    fi
 
-    printf "\n" >&2
-    log_section "All done 🚀"
-    log_ok "Open a new terminal or run: source ~/.bashrc"
-    log_info "Full log: $LOG_FILE"
+    # Offer scaffold
+    if tui_confirm "Create a DevOps project folder structure?" "n"; then
+        scaffold_interactive "${CONF_DIR}/folders.conf"
+    fi
+
+    # Offer git config
+    if ! git config --global user.name &>/dev/null; then
+        if tui_confirm "Set up Git global config?" "y"; then
+            run_git_config_wizard
+        fi
+    fi
+
+    echo "" >&2
+    log_ok "devsetup complete! Happy coding!"
+    log_info "Log file: $LOG_FILE"
+    echo "" >&2
 }
 
-# =============================================================================
-# ── Entrypoint ────────────────────────────────────────────────────────────────
-# =============================================================================
+# ── Main entry point ──────────────────────────────────────────────────────────
 main() {
+    # Handle --dry-run prefix: strip it and set flag
+    if [[ "${1:-}" == "--dry-run" ]]; then
+        DRY_RUN="true"
+        export DRY_RUN
+        shift
+        if [[ $# -eq 0 ]]; then
+            log_info "Dry-run mode enabled. Specify a command to preview."
+            _print_help
+            return 0
+        fi
+    fi
+
+    # Acquire lock for install operations
+    local needs_lock=true
+    case "${1:-}" in
+        --help|-h|--version|-v|--list|--status|--doctor|--preview-aliases|--preview-scaffold|--log)
+            needs_lock=false ;;
+    esac
+    [[ "$needs_lock" == "true" ]] && _acquire_lock
+
+    # Detect OS early for all commands
     detect_os
-    _acquire_lock
 
-    [[ $# -eq 0 ]] && { run_interactive; exit 0; }
+    case "${1:-}" in
+        --help|-h)
+            _print_help
+            ;;
 
-    case "$1" in
-        --help|-h)    _print_help ;;
-        --version)    echo "devsetup $DEVSETUP_VERSION" ;;
+        --version|-v)
+            echo "devsetup ${DEVSETUP_VERSION}"
+            ;;
 
         --doctor)
             _print_banner
             run_doctor
-            ;;
-
-        --status)
-            _print_banner
-            _load_tools_conf
-            show_status
             ;;
 
         --list)
@@ -341,87 +628,154 @@ main() {
             _print_list
             ;;
 
-        --dry-run)
-            DRY_RUN=true; export DRY_RUN
-            log_warn "DRY RUN — no changes will be made."
-            shift
-            if [[ $# -gt 0 ]]; then main "$@"
-            else run_interactive; fi
+        --status)
+            _print_banner
+            show_status
             ;;
 
         --install)
             shift
-            [[ $# -eq 0 ]] && { log_error "--install needs at least one tool name."; exit 1; }
+            if [[ $# -eq 0 ]]; then
+                log_error "Usage: devsetup --install TOOL [TOOL...]"
+                log_info  "Run 'devsetup --list' to see available tools."
+                return 1
+            fi
             _print_banner
-            log_section "Installing: $*"
-            check_internet 2>/dev/null || log_warn "No internet — installs may fail."
+            log_section "Installing ${#} Tool(s)"
             install_tool_list "$@"
+            log_summary
             ;;
 
         --update)
             shift
-            [[ $# -eq 0 ]] && { log_error "--update needs at least one tool name."; exit 1; }
+            if [[ $# -eq 0 ]]; then
+                log_error "Usage: devsetup --update TOOL [TOOL...]"
+                return 1
+            fi
             _print_banner
-            log_section "Updating: $*"
-            local -a _tools=("$@"); local _total="${#_tools[@]}" _n=0
-            _pkg_update
-            for _tool in "${_tools[@]}"; do
-                (( _n++ ))
-                log_progress "$_n" "$_total" "Updating $_tool"
-                local _body_fn="_install_${_tool,,}_body"
-                local _install_fn="install_${_tool,,}"
-                if declare -f "$_body_fn" >/dev/null; then
-                    spinner_start "Updating $_tool"
-                    _do_install "$_tool" "$_body_fn" \
-                        && { _installed_ok "$_tool updated."; summary_ok "$_tool updated"; } \
-                        || summary_fail "$_tool"
-                elif declare -f "$_install_fn" >/dev/null; then
-                    "$_install_fn" || true
+            log_section "Updating ${#} Tool(s)"
+            # Force reinstall by unsetting the already-installed check
+            for tool in "$@"; do
+                log_progress "$((++_u_idx))" "$#" "$tool"
+                local fn="install_${tool,,}"
+                if declare -f "$fn" > /dev/null 2>&1; then
+                    # Call install body directly, skipping _already_installed check
+                    local body_fn="_install_${tool,,}_body"
+                    if declare -f "$body_fn" > /dev/null 2>&1; then
+                        log_step "Updating $tool..."
+                        spinner_start "Updating $tool"
+                        _do_install "$tool" "$body_fn" && { spinner_stop ok; summary_ok "$tool (updated)"; } \
+                            || summary_fail "$tool"
+                    else
+                        # Simple package reinstall
+                        log_step "Reinstalling $tool..."
+                        spinner_start "Reinstalling $tool"
+                        _do_install "$tool" _pkg_install "$tool" && { spinner_stop ok; summary_ok "$tool (updated)"; } \
+                            || summary_fail "$tool"
+                    fi
                 else
-                    log_error "No updater for: $_tool"; summary_fail "$_tool (unknown)"
+                    log_error "No installer for: $tool"
+                    summary_fail "$tool (unknown)"
                 fi
             done
-            echo >&2; log_summary
+            log_summary
             ;;
 
         --uninstall)
             shift
-            [[ $# -eq 0 ]] && { log_error "--uninstall needs at least one tool name."; exit 1; }
+            if [[ $# -eq 0 ]]; then
+                log_error "Usage: devsetup --uninstall TOOL [TOOL...]"
+                return 1
+            fi
             _print_banner
-            log_section "Uninstalling: $*"
-            tui_confirm "Remove ${*}? This cannot be undone." \
-                || { log_skip "Uninstall cancelled."; exit 0; }
-            local _tools=("$@"); local _total="${#_tools[@]}" _n=0
-            for _tool in "${_tools[@]}"; do
-                (( _n++ ))
-                log_progress "$_n" "$_total" "Removing $_tool"
-                uninstall_tool "$_tool" || log_warn "Could not fully remove $_tool"
+            log_section "Uninstalling ${#} Tool(s)"
+            for tool in "$@"; do
+                log_step "Removing $tool..."
+                spinner_start "Removing $tool"
+                if uninstall_tool "$tool"; then
+                    spinner_stop ok
+                    summary_ok "$tool (removed)"
+                else
+                    spinner_stop fail
+                    summary_fail "$tool"
+                fi
             done
-            echo >&2; log_summary
+            log_summary
             ;;
 
-        --git-config)  run_git_config_wizard ;;
-        --aliases)     inject_aliases "$CONF_DIR/aliases.conf" ;;
-        --remove-aliases) remove_aliases ;;
-        --preview-aliases) preview_aliases "$CONF_DIR/aliases.conf" ;;
+        --git-config)
+            _print_banner
+            run_git_config_wizard
+            ;;
+
+        --aliases)
+            _print_banner
+            inject_aliases "${CONF_DIR}/aliases.conf"
+            ;;
+
+        --remove-aliases)
+            remove_aliases
+            ;;
+
+        --preview-aliases)
+            preview_aliases "${CONF_DIR}/aliases.conf"
+            ;;
 
         --scaffold)
+            _print_banner
             shift
             if [[ -n "${1:-}" ]]; then
-                scaffold_project "$CONF_DIR/folders.conf" "$HOME/projects/$1"
+                scaffold_project "${CONF_DIR}/folders.conf" "$HOME/projects/$1"
             else
-                scaffold_interactive "$CONF_DIR/folders.conf"
+                scaffold_interactive "${CONF_DIR}/folders.conf"
             fi
             ;;
 
-        --preview-scaffold) preview_scaffold "$CONF_DIR/folders.conf" ;;
+        --preview-scaffold)
+            preview_scaffold "${CONF_DIR}/folders.conf"
+            ;;
+
+        --export)
+            shift
+            _export_tools "${1:-devsetup-tools.txt}"
+            ;;
+
+        --import)
+            shift
+            if [[ -z "${1:-}" ]]; then
+                log_error "Usage: devsetup --import FILE"
+                return 1
+            fi
+            _print_banner
+            _import_tools "$1"
+            log_summary
+            ;;
+
+        --log)
+            shift
+            _show_logs "${1:-5}"
+            ;;
+
+        --self-update)
+            _print_banner
+            _self_update
+            ;;
+
+        "")
+            # No args → interactive mode
+            run_interactive
+            ;;
 
         *)
-            log_error "Unknown option: $1"
-            echo -e "  ${DIM}Run 'devsetup --help' for usage.${RESET}" >&2
-            exit 1
+            log_error "Unknown command: $1"
+            echo "" >&2
+            _print_help
+            return 1
             ;;
     esac
 }
+
+# Initialize update counter for --update
+_u_idx=0
 
 main "$@"
