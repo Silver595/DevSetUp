@@ -136,6 +136,32 @@ check_pkg_lock() {
     _check_pass "Package lock" "no lock detected"
 }
 
+check_memory() {
+    local mem_mb
+    mem_mb=$(free -m 2>/dev/null | awk '/^Mem:/ {print $7}')
+    if [[ -z "$mem_mb" ]]; then
+        _check_warn "Available memory" "could not determine"
+        return 0
+    fi
+    if (( mem_mb >= 512 )); then
+        _check_pass "Available memory" "${mem_mb}MB free"
+    elif (( mem_mb >= 256 )); then
+        _check_warn "Available memory" "${mem_mb}MB free — low, installs may be slow"
+    else
+        _check_fail "Available memory" "${mem_mb}MB free — critically low!"
+        return 1
+    fi
+}
+
+check_bash_version() {
+    if (( BASH_VERSINFO[0] >= 4 )); then
+        _check_pass "Bash version" "$BASH_VERSION"
+    else
+        _check_fail "Bash version" "$BASH_VERSION (need 4.0+)"
+        return 1
+    fi
+}
+
 run_doctor() {
     detect_os
     echo -e "" >&2
@@ -143,10 +169,12 @@ run_doctor() {
     echo -e "" >&2
 
     local issues=0
-    check_internet     || (( issues++ ))
+    check_bash_version   || (( issues++ ))
+    check_internet       || (( issues++ ))
     check_sudo
-    check_disk_space / || (( issues++ ))
-    check_pkg_manager  || (( issues++ ))
+    check_disk_space /   || (( issues++ ))
+    check_memory         || (( issues++ ))
+    check_pkg_manager    || (( issues++ ))
     check_required_tools || (( issues++ ))
     check_pkg_lock
 

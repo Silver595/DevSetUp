@@ -3,6 +3,9 @@
 # lib/install.sh — Robust installer with retry, lock detection, uninstall
 # =============================================================================
 
+# ── Session-level state ───────────────────────────────────────────────────────
+_PKG_INDEX_REFRESHED="${_PKG_INDEX_REFRESHED:-false}"
+
 # ── Package management helpers ────────────────────────────────────────────────
 
 # Wait for dpkg/apt lock (apt only) — max 60 seconds
@@ -17,7 +20,7 @@ _wait_pkg_lock() {
         sleep 2; (( waited += 2 ))
         if (( waited > 60 )); then
             spinner_stop fail
-            log_error "apt lock held for >60s. Run: sudo rm /var/lib/dpkg/lock-frontend"
+            log_error "apt lock held for >60s. Try: sudo rm /var/lib/dpkg/lock-frontend && sudo dpkg --configure -a"
             return 1
         fi
     done
@@ -27,26 +30,34 @@ _wait_pkg_lock() {
 
 # curl with retry (3 attempts, exponential backoff)
 _curl_retry() {
-    local attempt=0 delay=1 max=3
+    local attempt=0 delay=2 max=3
     while (( attempt < max )); do
-        curl "$@" && return 0
+        if curl --connect-timeout 10 --max-time 120 "$@"; then
+            return 0
+        fi
         (( attempt++ ))
         if (( attempt < max )); then
             log_warn "curl failed (attempt $attempt/$max). Retrying in ${delay}s..."
             sleep "$delay"; (( delay *= 2 ))
         fi
     done
-    log_error "curl failed after $max attempts."
+    log_error "curl failed after $max attempts: $*"
     return 1
+}
+
+# Secure temporary directory — auto-cleaned on function return
+_mktemp_dir() {
+    local tmp; tmp="$(mktemp -d /tmp/devsetup_dl_XXXXXX)"
+    echo "$tmp"
 }
 
 _pkg_install() {
     _wait_pkg_lock || return 1
     case "$PKG_MANAGER" in
-        apt)    run_cmd $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
+        apt)    run_cmd $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
         dnf)    run_cmd $SUDO dnf install -y "$@" ;;
         yum)    run_cmd $SUDO yum install -y "$@" ;;
-        pacman) run_cmd $SUDO pacman -S --noconfirm "$@" ;;
+        pacman) run_cmd $SUDO pacman -S --noconfirm --needed "$@" ;;
         zypper) run_cmd $SUDO zypper install -y "$@" ;;
         brew)   run_cmd brew install "$@" ;;
         *)      log_error "Unknown package manager: $PKG_MANAGER"; return 1 ;;
@@ -59,13 +70,17 @@ _pkg_remove() {
         apt)    run_cmd $SUDO apt-get remove -y "$@"; run_cmd $SUDO apt-get autoremove -y ;;
         dnf)    run_cmd $SUDO dnf remove -y "$@" ;;
         yum)    run_cmd $SUDO yum remove -y "$@" ;;
-        pacman) run_cmd $SUDO pacman -Rns --noconfirm "$@" ;;
+        pacman) run_cmd $SUDO pacman -Rns --noconfirm "$@" 2>/dev/null || run_cmd $SUDO pacman -R --noconfirm "$@" ;;
         zypper) run_cmd $SUDO zypper remove -y "$@" ;;
         brew)   run_cmd brew uninstall "$@" ;;
     esac
 }
 
+# Refresh package index — only once per session
 _pkg_update() {
+    if [[ "$_PKG_INDEX_REFRESHED" == "true" ]]; then
+        return 0
+    fi
     log_step "Refreshing package index..."
     _wait_pkg_lock || return 1
     case "$PKG_MANAGER" in
@@ -76,6 +91,7 @@ _pkg_update() {
         zypper) run_cmd $SUDO zypper refresh || true ;;
         brew)   run_cmd brew update || true ;;
     esac
+    _PKG_INDEX_REFRESHED=true
 }
 
 _pkg_enable_service() {
@@ -100,10 +116,12 @@ _do_install() {
         printf "  ${ORANGE}${BOLD}[dry-run]${RESET}  ${DIM}Would install: ${CYAN}%s${RESET}\n" "$tool" >&2
         return 0
     fi
-    local rc=0; "$@" || rc=$?
+    local rc=0
+    "$@" 2>> "$LOG_FILE" || rc=$?
     if [[ $rc -ne 0 ]]; then
-        spinner_stop fail
-        log_error "Failed to install $tool (exit $rc). See: $LOG_FILE"
+        spinner_stop fail 2>/dev/null || true
+        log_error "Failed to install $tool (exit $rc). Check: $LOG_FILE"
+        log_error "  Tip: Run 'devsetup --doctor' to check system readiness"
         return $rc
     fi
 }
@@ -130,7 +148,7 @@ _install_docker_body() {
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg lsb-release
             $SUDO mkdir -p /etc/apt/keyrings
             _curl_retry -fsSL "https://download.docker.com/linux/${OS_ID}/gpg" \
-                | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+                | $SUDO gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
             echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/${OS_ID} $(lsb_release -cs) stable" \
                 | $SUDO tee /etc/apt/sources.list.d/docker.list > /dev/null
@@ -247,12 +265,12 @@ install_minikube() {
 _install_terraform_body() {
     case "$OS_FAMILY" in
         debian)
-            $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg software-properties-common wget
-            wget -qO- https://apt.releases.hashicorp.com/gpg \
-                | $SUDO gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg software-properties-common
+            _curl_retry -fsSL https://apt.releases.hashicorp.com/gpg \
+                | $SUDO gpg --batch --yes --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
             echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
 https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-                | $SUDO tee /etc/apt/sources.list.d/hashicorp.list
+                | $SUDO tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y terraform
             ;;
@@ -307,8 +325,8 @@ install_ansible() {
 _install_vagrant_body() {
     case "$OS_FAMILY" in
         debian)
-            wget -qO- https://apt.releases.hashicorp.com/gpg \
-                | $SUDO gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg 2>/dev/null || true
+            _curl_retry -fsSL https://apt.releases.hashicorp.com/gpg \
+                | $SUDO gpg --batch --yes --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg 2>/dev/null || true
             echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
 https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
                 | $SUDO tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
@@ -367,7 +385,7 @@ _install_gcloud_body() {
 https://packages.cloud.google.com/apt cloud-sdk main" \
                 | $SUDO tee /etc/apt/sources.list.d/google-cloud-sdk.list
             _curl_retry -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-                | $SUDO gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+                | $SUDO gpg --batch --yes --dearmor -o /usr/share/keyrings/cloud.google.gpg
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y google-cloud-cli
             ;;
@@ -401,7 +419,7 @@ _install_azure_body() {
         debian)
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl apt-transport-https gnupg lsb-release
             _curl_retry -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-                | $SUDO gpg --dearmor -o /usr/share/keyrings/microsoft.gpg
+                | $SUDO gpg --batch --yes --dearmor -o /usr/share/keyrings/microsoft.gpg
             echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] \
 https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" \
                 | $SUDO tee /etc/apt/sources.list.d/azure-cli.list
@@ -652,7 +670,7 @@ _install_mongodb_body() {
         debian)
             $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y gnupg curl
             _curl_retry -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc \
-                | $SUDO gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+                | $SUDO gpg --batch --yes -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
             local codename; codename="$(lsb_release -cs)"
             echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] \
 https://repo.mongodb.org/apt/ubuntu ${codename}/mongodb-org/7.0 multiverse" \
@@ -915,7 +933,7 @@ show_status() {
     )
 
     local -a sorted_cmds=()
-    IFS=$'\n' read -ra sorted_cmds <<< "$(printf '%s\n' "${!VERSIONS[@]}" | sort)"
+    mapfile -t sorted_cmds < <(printf '%s\n' "${!VERSIONS[@]}" | sort)
 
     for cmd in "${sorted_cmds[@]}"; do
         local ver="${VERSIONS[$cmd]}"

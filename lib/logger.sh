@@ -77,7 +77,23 @@ run_cmd() {
         return 0
     fi
     printf '  $ %s\n' "$*" >> "$LOG_FILE"
-    "$@" >> "$LOG_FILE" 2>&1
+    local rc=0
+    "$@" >> "$LOG_FILE" 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        printf '  [FAILED rc=%d] %s\n' "$rc" "$*" >> "$LOG_FILE"
+    fi
+    return $rc
+}
+
+# run_cmd_visible: like run_cmd but shows stdout/stderr to user too
+run_cmd_visible() {
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        printf "  ${DIM}${ORANGE}[dry-run]${RESET}  ${DIM}%s${RESET}\n" "$*" >&2
+        return 0
+    fi
+    printf '  $ %s\n' "$*" >> "$LOG_FILE"
+    "$@" 2>&1 | tee -a "$LOG_FILE" >&2
+    return "${PIPESTATUS[0]}"
 }
 
 # ── Spinner ───────────────────────────────────────────────────────────────────
