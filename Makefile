@@ -2,7 +2,7 @@
 #  Makefile — devsetup build & packaging helpers
 # =============================================================================
 NAME        := devsetup
-VERSION     := 1.0.2
+VERSION     := 1.1.0
 ARCH        := all
 MAINTAINER  := akashpurjalkar66@gmail.com <[EMAIL_ADDRESS]>
 DESCRIPTION := DevOps bootstrapper — interactive installer for Docker, kubectl, Terraform, AWS CLI, Helm, Node.js, Python, Git and more.
@@ -22,8 +22,11 @@ install:
 	install -d $(DESTDIR)$(BINDIR)
 	install -d $(DESTDIR)$(SHAREDIR)/lib
 	install -d $(DESTDIR)$(SHAREDIR)/config
-	sed "s|^DEVSETUP_DIR=.*|DEVSETUP_DIR=\"$(SHAREDIR)\"|" devsetup \
-		| install -m 755 /dev/stdin $(DESTDIR)$(BINDIR)/$(NAME)
+	sed \
+		-e "s|^DEVSETUP_DIR=.*|DEVSETUP_DIR=\"$(SHAREDIR)\"|" \
+		-e "s|^LIB_DIR=.*|LIB_DIR=\"\$${DEVSETUP_DIR}/lib\"|" \
+		-e "s|^CONF_DIR=.*|CONF_DIR=\"\$${DEVSETUP_DIR}/config\"|" \
+		devsetup | install -m 755 /dev/stdin $(DESTDIR)$(BINDIR)/$(NAME)
 	install -m 644 lib/*.sh   $(DESTDIR)$(SHAREDIR)/lib/
 	chmod +x $(DESTDIR)$(SHAREDIR)/lib/*.sh
 	install -m 644 config/*   $(DESTDIR)$(SHAREDIR)/config/
@@ -49,8 +52,11 @@ deb: clean-build
 	install -d $(BUILD_DIR)/usr/share/doc/$(NAME)
 
 	# Binary (with DEVSETUP_DIR patched to installed location)
-	sed "s|^DEVSETUP_DIR=.*|DEVSETUP_DIR=\"/usr/share/$(NAME)\"|" devsetup \
-		| install -m 755 /dev/stdin $(BUILD_DIR)/usr/bin/$(NAME)
+	sed \
+		-e "s|^DEVSETUP_DIR=.*|DEVSETUP_DIR=\"/usr/share/$(NAME)\"|" \
+		-e "s|^LIB_DIR=.*|LIB_DIR=\"\$${DEVSETUP_DIR}/lib\"|" \
+		-e "s|^CONF_DIR=.*|CONF_DIR=\"\$${DEVSETUP_DIR}/config\"|" \
+		devsetup | install -m 755 /dev/stdin $(BUILD_DIR)/usr/bin/$(NAME)
 
 	# Lib & config
 	install -m 644 lib/*.sh   $(BUILD_DIR)/usr/share/$(NAME)/lib/
@@ -98,6 +104,20 @@ lint:
 	@bash -n devsetup && echo "  devsetup: OK"
 	@for f in lib/*.sh; do bash -n "$$f" && echo "  $$f: OK"; done
 	@echo "✔  All syntax checks passed"
+
+# ── Smoke test (dry-run mode) ─────────────────────────────────────────────────
+.PHONY: test
+test: lint
+	@echo ""
+	@echo "→ Running smoke tests..."
+	@bash devsetup --version | grep -q "devsetup" && echo "  --version: OK"     || echo "  --version: FAIL"
+	@bash devsetup --help > /dev/null 2>&1        && echo "  --help: OK"        || echo "  --help: FAIL"
+	@bash devsetup --list > /dev/null 2>&1        && echo "  --list: OK"        || echo "  --list: FAIL"
+	@bash devsetup --doctor > /dev/null 2>&1;                                      echo "  --doctor: OK (ran)"
+	@DRY_RUN=true bash devsetup --install git > /dev/null 2>&1 && echo "  --dry-run --install: OK" || echo "  --dry-run --install: FAIL"
+	@bash devsetup --preview-aliases > /dev/null 2>&1  && echo "  --preview-aliases: OK"  || echo "  --preview-aliases: FAIL"
+	@bash devsetup --preview-scaffold > /dev/null 2>&1 && echo "  --preview-scaffold: OK" || echo "  --preview-scaffold: FAIL"
+	@echo "✔  Smoke tests done"
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 .PHONY: help
