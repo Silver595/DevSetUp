@@ -5,13 +5,14 @@
   ██╔══██╗██╔════╝██║   ██║██╔════╝██╔════╝╚══██╔══╝██║   ██║██╔══██╗
   ██║  ██║█████╗  ██║   ██║███████╗█████╗     ██║   ██║   ██║██████╔╝
   ██║  ██║██╔══╝  ╚██╗ ██╔╝╚════██║██╔══╝     ██║   ██║   ██║██╔═══╝
+  ██║  ██║██╔══╝  ╚██╗ ██╔╝╚════██║██╔══╝     ██║   ██║   ██║██╔═╝
   ██████╔╝███████╗ ╚████╔╝ ███████║███████╗   ██║   ╚██████╔╝██║
   ╚═════╝ ╚══════╝  ╚═══╝  ╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝
 ```
 
 **One-command setup for your entire DevOps environment.**
 
-[![Version](https://img.shields.io/badge/version-1.0.1-indigo?style=flat-square)](https://github.com/Silver595/DevSetUp/releases)
+[![Version](https://img.shields.io/badge/version-1.0.5-indigo?style=flat-square)](https://github.com/Silver595/DevSetUp/releases)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-bash%204%2B-blue?style=flat-square)](https://www.gnu.org/software/bash/)
 [![OS](https://img.shields.io/badge/OS-Debian%20·%20Ubuntu%20·%20Fedora%20·%20Arch-orange?style=flat-square)](#-supported-operating-systems)
@@ -37,8 +38,8 @@ devsetup
 ### Option 2 — `.deb` package (Debian / Ubuntu)
 
 ```bash
-curl -fsSLO https://github.com/Silver595/DevSetUp/releases/latest/download/devsetup_1.1.0_all.deb
-sudo dpkg -i devsetup_1.1.0_all.deb
+curl -fsSLO https://github.com/Silver595/DevSetUp/releases/latest/download/devsetup_1.0.5_all.deb
+sudo dpkg -i devsetup_1.0.5_all.deb
 ```
 
 ### Option 3 — Clone & run
@@ -385,16 +386,16 @@ devsetup/
 
 ## 🌐 TUI Backends
 
-`devsetup` auto-detects the best available interface:
+The pure-bash arrow-key TUI is the **default** — it works everywhere: sudo, SSH, tmux, any terminal.
 
-| Backend | Experience | Install |
+| Backend | Experience | How to use |
 |---|---|---|
-| `whiptail` | ✔ Dialog boxes | `apt install whiptail` |
-| `dialog` | ✔ Dialog boxes | `apt install dialog` |
-| `fzf` | ✔ Fuzzy finder | `devsetup --install fzf` |
-| **Pure bash** | ✔ Arrow-key TUI | **Built-in — always works** |
+| **Pure bash** | ✔ Arrow keys, built-in | Default — always works |
+| `whiptail` | ✔ Dialog boxes | `DEVSETUP_TUI=whiptail devsetup` |
+| `dialog` | ✔ Dialog boxes | `DEVSETUP_TUI=dialog devsetup` |
+| `fzf` | ✔ Fuzzy search | `DEVSETUP_TUI=fzf devsetup` |
 
-The pure-bash fallback supports: `↑↓` / `j k` navigate · `Space` toggle · `Enter` confirm · `a` select all · `n` clear · `q` quit
+**Pure-bash controls:** `↑↓` / `j k` navigate · `Space` toggle · `Enter` confirm · `a` select all · `n` clear · `q` quit
 
 ---
 
