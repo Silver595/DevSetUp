@@ -1,6 +1,6 @@
 # devsetup — Complete Project Documentation
 
-> **Version:** 1.0.5 · **Repo:** [github.com/Silver595/DevSetUp](https://github.com/Silver595/DevSetUp)
+> **Version:** 1.1.0 · **Repo:** [github.com/Silver595/DevSetUp](https://github.com/Silver595/DevSetUp)
 
 ---
 
@@ -90,11 +90,11 @@ curl -fsSL https://raw.githubusercontent.com/Silver595/DevSetUp/main/install.sh 
 ### Method 2: .deb package
 
 ```bash
-sudo dpkg -i devsetup_1.0.5_all.deb
+sudo dpkg -i devsetup_1.1.0_all.deb
 ```
 
 Binary lands at `/usr/bin/devsetup` (managed by dpkg).
-The `.deb` includes `Replaces: devsetup (<< 1.0.5)` so it cleanly upgrades older versions.
+The `.deb` includes `Replaces: devsetup (<< 1.1.0)` so it cleanly upgrades older versions.
 
 ### Method 3: Run from source
 
@@ -125,6 +125,10 @@ When run from source, `DEVSETUP_DIR` is auto-detected via `readlink -f "${BASH_S
 | `devsetup --preview-aliases` | Preview aliases without injecting |
 | `devsetup --scaffold [NAME]` | Create a DevOps project folder structure |
 | `devsetup --preview-scaffold` | Show what scaffold would create |
+| `devsetup --export FILE` | Export currently installed tools to a file |
+| `devsetup --import FILE` | Read tool list from a file and install them |
+| `devsetup --log [N]` | List and optionally view the last `N` log files |
+| `devsetup --self-update` | Update devsetup from the GitHub repository |
 | `devsetup --dry-run [CMD...]` | Preview any action without changing anything |
 | `devsetup --version` | Print version string |
 | `devsetup --help` | Show full help |
@@ -582,10 +586,10 @@ install -m 644 lib/*.sh  /tmp/devsetup-build/usr/share/devsetup/lib/
 install -m 644 config/*  /tmp/devsetup-build/usr/share/devsetup/config/
 
 # Generate control file from template
-sed -e "s|@@VERSION@@|1.0.5|g" ... packaging/debian/control.template \
+sed -e "s|@@VERSION@@|1.1.0|g" ... packaging/debian/control.template \
     > /tmp/devsetup-build/DEBIAN/control
 
-dpkg-deb --build --root-owner-group /tmp/devsetup-build devsetup_1.0.5_all.deb
+dpkg-deb --build --root-owner-group /tmp/devsetup-build devsetup_1.1.0_all.deb
 ```
 
 ### control.template fields
@@ -659,6 +663,14 @@ Runs on `configure` and `upgrade`. Makes all `lib/*.sh` executable. Removes lega
 - **Fix:** `install.sh` completely rewritten — OS detection, internet check, PATH fix, sanity checks, correct version
 - **Fix:** `check_internet` was being called with `2>/dev/null` in pre-flight, hiding its ✔/✘ output from the user
 - `README.md` updated with v1.0.5 badge and new TUI backends table
+
+### v1.1.0 — New commands & polish
+- Added `--export` / `--import` to save and restore selected tools
+- Added `--log` viewer for recent install logs
+- Added `--self-update` to pull the latest script from GitHub
+- Improved doctor checks (bash version, low-memory warning)
+- Improved TUI performance and key bindings; better status display
+- Curl installer and Makefile updated for version 1.1.0 `.deb` builds
 
 ---
 
@@ -744,4 +756,4 @@ Also, curl installs placed binary in `/usr/local/bin/devsetup` while deb placed 
 
 ---
 
-*Documentation generated for devsetup v1.0.5 — 2026-03-03*
+*Documentation generated for devsetup v1.1.0 — 2026-03-03*

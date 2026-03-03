@@ -12,7 +12,7 @@
 
 **One-command setup for your entire DevOps environment.**
 
-[![Version](https://img.shields.io/badge/version-1.0.5-indigo?style=flat-square)](https://github.com/Silver595/DevSetUp/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-indigo?style=flat-square)](https://github.com/Silver595/DevSetUp/releases)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-bash%204%2B-blue?style=flat-square)](https://www.gnu.org/software/bash/)
 [![OS](https://img.shields.io/badge/OS-Debian%20·%20Ubuntu%20·%20Fedora%20·%20Arch-orange?style=flat-square)](#-supported-operating-systems)
@@ -38,8 +38,8 @@ devsetup
 ### Option 2 — `.deb` package (Debian / Ubuntu)
 
 ```bash
-curl -fsSLO https://github.com/Silver595/DevSetUp/releases/latest/download/devsetup_1.0.5_all.deb
-sudo dpkg -i devsetup_1.0.5_all.deb
+curl -fsSLO https://github.com/Silver595/DevSetUp/releases/latest/download/devsetup_1.1.0_all.deb
+sudo dpkg -i devsetup_1.1.0_all.deb
 ```
 
 ### Option 3 — Clone & run
@@ -48,6 +48,7 @@ sudo dpkg -i devsetup_1.0.5_all.deb
 git clone https://github.com/Silver595/DevSetUp.git
 cd DevSetUp
 bash devsetup
+# bash install.sh
 ```
 
 ---
@@ -58,9 +59,9 @@ bash devsetup
 
 ```
   ╔══════════════════════════════════════════════════════════╗
-  ║        devsetup — Tool Selector                        ║
+  ║        devsetup — Tool Selector                          ║
   ╚══════════════════════════════════════════════════════════╝
-  ↑↓ navigate   Space toggle   Enter confirm   a all   q quit
+  ↑↓ [navigate]   Space [toggle]   Enter [confirm]   a [all]   q [quit]
 
   ▸ ⎈ DevOps
     [✔] docker            ✔ installed
@@ -111,6 +112,14 @@ devsetup --aliases
 
 # Create a DevOps project folder structure
 devsetup --scaffold my-api
+
+# Export / import your tool selection
+devsetup --export my-tools.txt
+devsetup --import my-tools.txt
+
+# Show recent logs and self-update
+devsetup --log 5
+devsetup --self-update
 
 # Show help
 devsetup --help
@@ -234,7 +243,7 @@ devsetup --status
   │  ✔  kubectl          v1.29.3               │
   │  ✔  git              2.43.0                │
   │  ✔  python3          3.12.2                │
-  │  ✔  jq               jq-1.7               │
+  │  ✔  jq               jq-1.7                │
   ╰────────────────────────────────────────────╯
 ```
 
@@ -436,14 +445,16 @@ LOG_FILE=~/devsetup.log devsetup --install terraform
 
 ## 📜 License
 
-MIT — use freely, modify freely.
+[MIT License](LICENSE)
 
 ---
 
 <div align="center">
 
-Made with ❤️ by [Silver595](https://github.com/Silver595)
+Made with ❤️ by [Silver595](https://github.com/silver595/)
 
 **[⭐ Star on GitHub](https://github.com/Silver595/DevSetUp)** · **[🐛 Report a Bug](https://github.com/Silver595/DevSetUp/issues)** · **[💡 Request a Feature](https://github.com/Silver595/DevSetUp/issues)**
+
+**[Detailed Documentation](DOCUMENTATION.md)**
 
 </div>
